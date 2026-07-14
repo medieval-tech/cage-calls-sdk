@@ -110,6 +110,12 @@ export function createCapabilityRegistry(network: CageCallsNetwork, rpc: RpcTran
   const probe = async (capability: CapabilityName, signal?: AbortSignal): Promise<boolean> => {
     if (values[capability]) return true;
     if (unsupported.has(capability)) return false;
+    // Generated deployment presets are authoritative. Probing a known-false
+    // capability only spends RPC budget on an entrypoint that cannot exist.
+    if (network.preset) {
+      unsupported.add(capability);
+      return false;
+    }
     const active = pending.get(capability);
     if (active) return active;
     const definition = CAPABILITY_PROBES[capability];

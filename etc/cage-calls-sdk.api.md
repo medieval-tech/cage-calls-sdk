@@ -437,6 +437,7 @@ export function createFallbackRpcTransport(options: {
     headers?: Readonly<Record<string, string>>;
     logger?: SdkLogger;
     timeoutMs?: number;
+    maxConcurrency?: number;
 }): RpcTransport;
 
 // @public (undocumented)
@@ -1873,12 +1874,18 @@ export const transportAttemptsFromError: typeof attemptsFromError;
 export class TransportError extends CageCallsSdkError {
     constructor(source: DataSource, message: string, options?: {
         status?: number;
+        rpcCode?: number;
+        transportCode?: string;
         cause?: unknown;
     });
+    // (undocumented)
+    readonly rpcCode?: number;
     // (undocumented)
     readonly source: DataSource;
     // (undocumented)
     readonly status?: number;
+    // (undocumented)
+    readonly transportCode?: string;
 }
 
 // @public (undocumented)

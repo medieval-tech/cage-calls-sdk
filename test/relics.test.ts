@@ -11,6 +11,22 @@ import { encodeOwnedPage, encodeRelicRows, toriiToken } from "./fixtures.js";
 const owner = "0x123" as const;
 
 describe("relic ownership source policy", () => {
+  it("trusts known-disabled preset capabilities without probing missing entrypoints", async () => {
+    const rpc = createMockRpcTransport();
+    const torii = createMockToriiTransport({
+      tokens: {
+        totalCount: 1,
+        edges: [{ node: { tokenMetadata: toriiToken(1n, MAINNET_PRESET.contracts.RelicNFT) } }],
+      },
+    });
+    const client = createCageCallsClient({ network: "mainnet", transports: { rpc, torii } });
+
+    const response = await client.relics.feed({ limit: 1 });
+
+    expect(response.data.items).toHaveLength(1);
+    expect(rpc.calls).toEqual([]);
+  });
+
   it("accepts complete Torii ownership only after balance verification and skips other metadata sources", async () => {
     const rpc = createMockRpcTransport({ calls: { balance_of: ["2", "0"] } });
     const torii = createMockToriiTransport({
@@ -95,7 +111,8 @@ describe("relic ownership source policy", () => {
     const metadata = createMockMetadataTransport({
       "ipfs://metadata-1": { name: "Hydrated Relic", image: "ipfs://image", attributes: [{ trait_type: "Power", value: 8 }] },
     });
-    const client = createCageCallsClient({ network: "mainnet", transports: { rpc, torii, metadata } });
+    const { preset: _preset, ...probingMainnet } = MAINNET_PRESET;
+    const client = createCageCallsClient({ network: probingMainnet, transports: { rpc, torii, metadata } });
 
     const response = await client.relics.owned(owner);
 

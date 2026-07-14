@@ -49,6 +49,83 @@ describe("RPC transports", () => {
     expect(String(error)).not.toContain("super-secret-key");
   });
 
+  it("does not duplicate a failed request when primary and fallback URLs normalize to the same endpoint", async () => {
+    const fetch = vi.fn(async () => json({}, 429));
+    const logger = { warn: vi.fn() };
+    const rpc = createFallbackRpcTransport({
+      primaryUrl: "https://rpc.example/path",
+      fallbackUrl: "https://rpc.example/path/../path",
+      fetch,
+      logger,
+    });
+
+    const error = await rpc.request("starknet_blockNumber").catch((value: unknown) => value);
+
+    expect(error).toMatchObject({ status: 429, transportCode: "HTTP_429" });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(logger.warn.mock.calls.some(([message]) => message === "Cage Calls RPC fallback selected.")).toBe(false);
+  });
+
+  it("does not fall back or warn when the caller aborts the primary request", async () => {
+    const controller = new AbortController();
+    const logger = { warn: vi.fn() };
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    }));
+    const rpc = createFallbackRpcTransport({
+      primaryUrl: "https://primary.example",
+      fallbackUrl: "https://fallback.example",
+      fetch,
+      logger,
+    });
+
+    const pending = rpc.request("starknet_blockNumber", [], { signal: controller.signal });
+    controller.abort();
+    const error = await pending.catch((value: unknown) => value);
+
+    expect(error).toMatchObject({ transportCode: "ABORTED" });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("preserves Starknet JSON-RPC codes in errors, attempts, and sanitized logs", async () => {
+    const logger = { warn: vi.fn() };
+    const rpc = createHttpRpcTransport({
+      url: "https://rpc.example/secret",
+      fetch: vi.fn(async () => json({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: "Method not found" } })),
+      logger,
+    });
+
+    const error = await rpc.request("starknet_call").catch((value: unknown) => value);
+
+    expect(error).toMatchObject({ rpcCode: -32601, transportCode: "RPC_-32601" });
+    expect(error).toMatchObject({ attempts: [{ errorCode: "RPC_-32601" }] });
+    expect(logger.warn).toHaveBeenCalledWith("Cage Calls RPC request failed.", {
+      method: "starknet_call",
+      errorCode: "RPC_-32601",
+      rpcCode: -32601,
+    });
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("secret");
+  });
+
+  it("bounds concurrent requests per RPC endpoint", async () => {
+    let active = 0;
+    let peak = 0;
+    const fetch = vi.fn(async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return json({ jsonrpc: "2.0", id: 1, result: 1 });
+    });
+    const rpc = createHttpRpcTransport({ url: "https://rpc.example", fetch, maxConcurrency: 2 });
+
+    await Promise.all(Array.from({ length: 8 }, () => rpc.request("starknet_blockNumber")));
+
+    expect(fetch).toHaveBeenCalledTimes(8);
+    expect(peak).toBe(2);
+  });
+
   it("honors cancellation", async () => {
     const controller = new AbortController();
     const rpc = createHttpRpcTransport({

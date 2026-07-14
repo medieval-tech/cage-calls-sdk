@@ -44,13 +44,23 @@ export class UnsupportedCapabilityError extends CageCallsSdkError {
 export class TransportError extends CageCallsSdkError {
   readonly source: DataSource;
   readonly status?: number;
+  readonly rpcCode?: number;
+  readonly transportCode?: string;
 
-  constructor(source: DataSource, message: string, options: { status?: number; cause?: unknown } = {}) {
-    const details = options.status === undefined ? undefined : { status: options.status };
+  constructor(source: DataSource, message: string, options: { status?: number; rpcCode?: number; transportCode?: string; cause?: unknown } = {}) {
+    const details = options.status === undefined && options.rpcCode === undefined && options.transportCode === undefined
+      ? undefined
+      : {
+          ...(options.status === undefined ? {} : { status: options.status }),
+          ...(options.rpcCode === undefined ? {} : { rpcCode: options.rpcCode }),
+          ...(options.transportCode === undefined ? {} : { transportCode: options.transportCode }),
+        };
     super("TRANSPORT_ERROR", message, details, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = "TransportError";
     this.source = source;
     if (options.status !== undefined) this.status = options.status;
+    if (options.rpcCode !== undefined) this.rpcCode = options.rpcCode;
+    if (options.transportCode !== undefined) this.transportCode = options.transportCode;
   }
 }
 
