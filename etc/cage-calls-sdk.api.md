@@ -55,6 +55,22 @@ export class AllSourcesFailedError extends CageCallsSdkError {
 }
 
 // @public (undocumented)
+export interface AnalyticsRepository {
+    // (undocumented)
+    snapshot(options?: RequestOptions): Promise<DataResult<AnalyticsSnapshot>>;
+}
+
+// @public (undocumented)
+export interface AnalyticsSnapshot {
+    // (undocumented)
+    buys: FightBuy[];
+    // (undocumented)
+    fights: Fight[];
+    // (undocumented)
+    winnerChoiceByFight: Record<string, number>;
+}
+
+// @public (undocumented)
 export function asBigInt(value: string | number | bigint, label?: string): bigint;
 
 // Warning: (ae-forgotten-export) The symbol "ActivityBase" needs to be exported by the entry point index.d.ts
@@ -185,6 +201,8 @@ export interface CageCallsClient {
     readonly activity: ActivityRepository;
     // (undocumented)
     readonly admin: AdminRepository;
+    // (undocumented)
+    readonly analytics: AnalyticsRepository;
     // (undocumented)
     readonly calls: CageCallsCallBuilders;
     // (undocumented)
@@ -394,6 +412,9 @@ export function createActivityRepository(context: RepositoryContext): ActivityRe
 export function createAdminRepository(context: RepositoryContext): AdminRepository;
 
 // @public (undocumented)
+export function createAnalyticsRepository(context: RepositoryContext): AnalyticsRepository;
+
+// @public (undocumented)
 export function createCageCallsClient(options: CreateCageCallsClientOptions): CageCallsClient;
 
 // @public (undocumented)
@@ -438,6 +459,8 @@ export function createFallbackRpcTransport(options: {
     logger?: SdkLogger;
     timeoutMs?: number;
     maxConcurrency?: number;
+    maxRetries?: number;
+    retryBaseDelayMs?: number;
 }): RpcTransport;
 
 // @public (undocumented)
@@ -1048,6 +1071,18 @@ export interface Market {
 }
 
 // @public (undocumented)
+export interface MarketCatalogItem {
+    // (undocumented)
+    fight?: Fight;
+    // (undocumented)
+    market: Market;
+    // (undocumented)
+    vaultDenominator: bigint;
+    // (undocumented)
+    vaultNumerators: bigint[];
+}
+
+// @public (undocumented)
 export interface MarketCreateInput {
     // (undocumented)
     collateralToken?: Address;
@@ -1103,6 +1138,11 @@ export interface MarketPosition {
 
 // @public (undocumented)
 export interface MarketsRepository {
+    // (undocumented)
+    catalog(input?: {
+        limit?: number;
+        cursor?: string;
+    }, options?: RequestOptions): Promise<DataResult<Page<MarketCatalogItem>>>;
     // (undocumented)
     conditionalBalance(account: Address, positionId: bigint, options?: RequestOptions): Promise<DataResult<bigint>>;
     // (undocumented)
@@ -1517,6 +1557,8 @@ export interface RequestBudget {
     maxRpcItems: number;
     // (undocumented)
     maxRpcPages: number;
+    // (undocumented)
+    maxToriiItems: number;
     // (undocumented)
     maxToriiPages: number;
     // (undocumented)

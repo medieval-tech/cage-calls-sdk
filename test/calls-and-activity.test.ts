@@ -12,6 +12,8 @@ import {
   type FightFeedItem,
   type FightsRepository,
   type RepositoryContext,
+  type RequestOptions,
+  type ToriiModelRequest,
 } from "../src/index.js";
 import { createMockRpcTransport, createMockToriiTransport } from "../src/testing.js";
 
@@ -138,7 +140,7 @@ describe("call plans and activity", () => {
         pageInfo: { hasNextPage: false },
       } }),
       capabilities: { has: () => false, probe: async () => false, snapshot: () => MAINNET_PRESET.capabilities },
-      budget: { timeoutMs: 1, maxConcurrency: 1, maxRpcPages: 1, maxRpcItems: 1, maxToriiPages: 1, pageSize: 20 },
+      budget: { timeoutMs: 1, maxConcurrency: 1, maxRpcPages: 1, maxRpcItems: 1, maxToriiPages: 1, maxToriiItems: 100, pageSize: 20 },
       now: () => 15_000,
     } satisfies RepositoryContext;
 
@@ -165,7 +167,7 @@ describe("call plans and activity", () => {
       network: MAINNET_PRESET,
       rpc: createMockRpcTransport(),
       capabilities: { has: () => false, probe: async () => false, snapshot: () => MAINNET_PRESET.capabilities },
-      budget: { timeoutMs: 1, maxConcurrency: 1, maxRpcPages: 1, maxRpcItems: 1, maxToriiPages: 1, pageSize: 1 },
+      budget: { timeoutMs: 1, maxConcurrency: 1, maxRpcPages: 1, maxRpcItems: 1, maxToriiPages: 1, maxToriiItems: 100, pageSize: 1 },
       now: () => 15_000,
     } satisfies RepositoryContext;
     const response = await createFightEventsRepository(context, fights).list({ now: 15n });
@@ -204,7 +206,7 @@ describe("call plans and activity", () => {
       network: MAINNET_PRESET,
       rpc,
       capabilities: { has: () => false, probe: async () => false, snapshot: () => MAINNET_PRESET.capabilities },
-      budget: { timeoutMs: 1, maxConcurrency: 2, maxRpcPages: 1, maxRpcItems: 20, maxToriiPages: 1, pageSize: 20 },
+      budget: { timeoutMs: 1, maxConcurrency: 2, maxRpcPages: 1, maxRpcItems: 20, maxToriiPages: 1, maxToriiItems: 100, pageSize: 20 },
       now: () => 15_000,
     } satisfies RepositoryContext;
 
@@ -226,31 +228,39 @@ describe("call plans and activity", () => {
       amount: "100",
       bought_at: boughtAt,
     });
+    const toriiRequests: ToriiModelRequest[] = [];
+    const torii = createMockToriiTransport({
+      models: {
+        FightBuy: {
+          edges: [
+            { cursor: "a", node: buy("0x1", "10") },
+            { cursor: "b", node: buy("0x2", "20") },
+            { cursor: "c", node: buy("0x3", "30") },
+          ],
+          totalCount: 3,
+          pageInfo: { hasNextPage: false, endCursor: "c" },
+        },
+      },
+    });
+    const originalModel = torii.model.bind(torii);
+    torii.model = async <T>(request: ToriiModelRequest, options?: RequestOptions) => {
+      toriiRequests.push(request);
+      return originalModel<T>(request, options);
+    };
     const context = {
       network: MAINNET_PRESET,
       rpc: createMockRpcTransport(),
-      torii: createMockToriiTransport({
-        models: {
-          FightBuy: {
-            edges: [
-              { cursor: "a", node: buy("0x1", "10") },
-              { cursor: "b", node: buy("0x2", "20") },
-              { cursor: "c", node: buy("0x3", "30") },
-            ],
-            totalCount: 3,
-            pageInfo: { hasNextPage: false, endCursor: "c" },
-          },
-        },
-      }),
+      torii,
       capabilities: { has: () => false, probe: async () => false, snapshot: () => MAINNET_PRESET.capabilities },
-      budget: { timeoutMs: 1, maxConcurrency: 2, maxRpcPages: 1, maxRpcItems: 20, maxToriiPages: 1, pageSize: 20 },
+      budget: { timeoutMs: 1, maxConcurrency: 2, maxRpcPages: 1, maxRpcItems: 20, maxToriiPages: 1, maxToriiItems: 100, pageSize: 20 },
       now: () => 15_000,
     } satisfies RepositoryContext;
 
-    const response = await createFightsRepository(context).buys(1n, { offset: 1, limit: 1 });
+    const response = await createFightsRepository(context).buys(84n, { offset: 1, limit: 1 });
 
     expect(response.data.items.map((item) => item.buyer)).toEqual(["0x2"]);
     expect(response.data.cursor).toBe(2);
     expect(response.data.hasMore).toBe(true);
+    expect(toriiRequests[0]?.where).toEqual({ fight_idEQ: "0x54" });
   });
 });

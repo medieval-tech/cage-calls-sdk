@@ -1,5 +1,6 @@
 import { createActivityRepository, type ActivityRepository } from "./activity.js";
 import { createAdminRepository, type AdminRepository } from "./admin.js";
+import { createAnalyticsRepository, type AnalyticsRepository } from "./analytics.js";
 import { createCallBuilders, type CageCallsCallBuilders } from "./calls.js";
 import { resolveBudget } from "./core.js";
 import { ConfigurationError } from "./errors.js";
@@ -40,6 +41,7 @@ export interface CreateCageCallsClientOptions {
 export interface CageCallsClient {
   readonly network: Readonly<CageCallsNetwork>;
   readonly capabilities: CapabilityRegistry;
+  readonly analytics: AnalyticsRepository;
   readonly fighters: FightersRepository;
   readonly fights: FightsRepository;
   readonly fightEvents: FightEventsRepository;
@@ -71,6 +73,7 @@ export function createCageCallsClient(options: CreateCageCallsClientOptions): Ca
   return Object.freeze({
     network,
     capabilities,
+    analytics: createAnalyticsRepository(context),
     fighters: createFightersRepository(context),
     fights,
     fightEvents: createFightEventsRepository(context, fights),

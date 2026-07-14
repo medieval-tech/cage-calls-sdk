@@ -86,6 +86,8 @@ interface HttpOptions {
   logger?: SdkLogger;
   timeoutMs?: number;
   maxConcurrency?: number;
+  maxRetries?: number;
+  retryBaseDelayMs?: number;
 }
 
 interface HttpRpcOptions extends HttpOptions {
@@ -106,6 +108,30 @@ function abortError(): Error {
   const error = new Error("Request aborted.");
   error.name = "AbortError";
   return error;
+}
+
+function retryAfterMs(response: Response): number | undefined {
+  const value = response.headers.get("retry-after")?.trim();
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1_000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+}
+
+function waitForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(abortError());
+    };
+    const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function createConcurrencyGate(limit: number): (signal?: AbortSignal) => Promise<() => void> {
@@ -190,8 +216,16 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
   const fetchImpl = resolveFetch(options.fetch);
   const timeoutMs = options.timeoutMs ?? 12_000;
   const maxConcurrency = options.maxConcurrency ?? 8;
+  const maxRetries = options.maxRetries ?? 2;
+  const retryBaseDelayMs = options.retryBaseDelayMs ?? 500;
   if (!Number.isSafeInteger(maxConcurrency) || maxConcurrency <= 0) {
     throw new ConfigurationError("RPC maxConcurrency must be a positive safe integer.");
+  }
+  if (!Number.isSafeInteger(maxRetries) || maxRetries < 0) {
+    throw new ConfigurationError("RPC maxRetries must be a non-negative safe integer.");
+  }
+  if (!Number.isSafeInteger(retryBaseDelayMs) || retryBaseDelayMs <= 0) {
+    throw new ConfigurationError("RPC retryBaseDelayMs must be a positive safe integer.");
   }
   const acquire = createConcurrencyGate(maxConcurrency);
   let id = 0;
@@ -202,34 +236,54 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
     requestOptions: RequestOptions = {},
   ): Promise<TransportResult<T>> => {
     const startedAt = Date.now();
+    let requestStartedAt = startedAt;
+    const retryAttempts: SourceAttempt[] = [];
     let release: (() => void) | undefined;
     let timeout: ReturnType<typeof withTimeout> | undefined;
     try {
       release = await acquire(requestOptions.signal);
       timeout = withTimeout(requestOptions.signal, timeoutMs);
       if (timeout.signal.aborted) throw abortError();
-      const response = await fetchImpl(endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/json", ...options.headers },
-        body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
-        signal: timeout.signal,
-      });
-      if (!response.ok) {
-        throw new TransportError("starknet-rpc", `RPC request failed with HTTP ${response.status}.`, {
-          status: response.status,
-          transportCode: `HTTP_${response.status}`,
-        });
+      for (let retry = 0; ; retry += 1) {
+        requestStartedAt = Date.now();
+        let serverDelayMs: number | undefined;
+        try {
+          const response = await fetchImpl(endpoint, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...options.headers },
+            body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
+            signal: timeout.signal,
+          });
+          serverDelayMs = retryAfterMs(response);
+          if (!response.ok) {
+            throw new TransportError("starknet-rpc", `RPC request failed with HTTP ${response.status}.`, {
+              status: response.status,
+              transportCode: `HTTP_${response.status}`,
+            });
+          }
+          const payload = await response.json() as { result?: T; error?: { code?: number; message?: string } };
+          if (payload.error) {
+            const code = payload.error.code === undefined ? "RPC_ERROR" : `RPC_${payload.error.code}`;
+            throw new TransportError("starknet-rpc", `RPC request failed (${code}).`, {
+              ...(payload.error.code === undefined ? {} : { rpcCode: payload.error.code }),
+              transportCode: code,
+            });
+          }
+          if (!("result" in payload)) throw new TransportError("starknet-rpc", "RPC response did not include a result.");
+          return {
+            data: payload.result as T,
+            attempts: [...retryAttempts, attempt("starknet-rpc", method, requestStartedAt, true)],
+          };
+        } catch (cause) {
+          const rateLimited = cause instanceof TransportError && (cause.status === 429 || cause.rpcCode === 429);
+          if (!rateLimited || retry >= maxRetries || timeout.signal.aborted || requestOptions.signal?.aborted) throw cause;
+          retryAttempts.push(attempt("starknet-rpc", method, requestStartedAt, false, {
+            ...(cause.status === undefined ? {} : { status: cause.status }),
+            errorCode: transportDiagnosticCode(cause),
+          }));
+          await waitForRetry(serverDelayMs ?? retryBaseDelayMs * (2 ** retry), timeout.signal);
+        }
       }
-      const payload = await response.json() as { result?: T; error?: { code?: number; message?: string } };
-      if (payload.error) {
-        const code = payload.error.code === undefined ? "RPC_ERROR" : `RPC_${payload.error.code}`;
-        throw new TransportError("starknet-rpc", `RPC request failed (${code}).`, {
-          ...(payload.error.code === undefined ? {} : { rpcCode: payload.error.code }),
-          transportCode: code,
-        });
-      }
-      if (!("result" in payload)) throw new TransportError("starknet-rpc", "RPC response did not include a result.");
-      return { data: payload.result as T, attempts: [attempt("starknet-rpc", method, startedAt, true)] };
     } catch (cause) {
       const transportCode = requestOptions.signal?.aborted
         ? "ABORTED"
@@ -243,7 +297,7 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
         options.logger?.warn?.("Cage Calls RPC request failed.", transportLogContext(method, transportError));
       }
       Object.defineProperty(transportError, "attempts", {
-        value: [attempt("starknet-rpc", method, startedAt, false, {
+        value: [...retryAttempts, attempt("starknet-rpc", method, requestStartedAt, false, {
           ...(transportError.status === undefined ? {} : { status: transportError.status }),
           errorCode: transportDiagnosticCode(transportError),
         })],
@@ -287,6 +341,8 @@ export function createFallbackRpcTransport(options: {
   logger?: SdkLogger;
   timeoutMs?: number;
   maxConcurrency?: number;
+  maxRetries?: number;
+  retryBaseDelayMs?: number;
 }): RpcTransport {
   const fallbackUrl = validateHttpUrl(options.fallbackUrl, "Fallback RPC URL");
   const primaryUrl = options.primaryUrl ? validateHttpUrl(options.primaryUrl, "Primary RPC URL") : undefined;
@@ -297,6 +353,8 @@ export function createFallbackRpcTransport(options: {
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.maxConcurrency ? { maxConcurrency: options.maxConcurrency } : {}),
+    ...(options.maxRetries === undefined ? {} : { maxRetries: options.maxRetries }),
+    ...(options.retryBaseDelayMs === undefined ? {} : { retryBaseDelayMs: options.retryBaseDelayMs }),
   });
   const primary = primaryUrl && primaryUrl !== fallbackUrl
     ? createHttpRpcTransport({
@@ -305,6 +363,8 @@ export function createFallbackRpcTransport(options: {
         ...(options.headers ? { headers: options.headers } : {}),
         ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
         ...(options.maxConcurrency ? { maxConcurrency: options.maxConcurrency } : {}),
+        ...(options.maxRetries === undefined ? {} : { maxRetries: options.maxRetries }),
+        ...(options.retryBaseDelayMs === undefined ? {} : { retryBaseDelayMs: options.retryBaseDelayMs }),
       })
     : fallback;
 

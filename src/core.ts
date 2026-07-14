@@ -6,7 +6,8 @@ export const DEFAULT_REQUEST_BUDGET: Readonly<RequestBudget> = Object.freeze({
   maxConcurrency: 5,
   maxRpcPages: 20,
   maxRpcItems: 2_000,
-  maxToriiPages: 20,
+  maxToriiPages: 50,
+  maxToriiItems: 50_000,
   pageSize: 100,
 });
 

@@ -1,5 +1,5 @@
 import { createDataResult, mapConcurrent } from "./core.js";
-import { clampPageSize, encodeU256, normalizeAddress } from "./codecs.js";
+import { clampPageSize, encodeU256, normalizeAddress, normalizeFelt } from "./codecs.js";
 import {
   decodeFightBuyRpc,
   decodeFightBuysRpc,
@@ -25,6 +25,7 @@ import { AllSourcesFailedError, UnsupportedCapabilityError, ValidationError } fr
 import type { CapabilityRegistry } from "./network.js";
 import type { RpcTransport, ToriiTransport, TransportResult } from "./transports.js";
 import { transportAttemptsFromError } from "./transports.js";
+import { readAllToriiModels } from "./torii-models.js";
 import type {
   Address,
   CageCallsNetwork,
@@ -41,6 +42,7 @@ import type {
   GachaPoolState,
   GachaUserState,
   Market,
+  MarketCatalogItem,
   MarketPosition,
   MarketState,
   Page,
@@ -100,6 +102,8 @@ const MARKET_SELECTION = [
   "market_id", "creator", "created_at", "question_id", "condition_id", "oracle",
   "outcome_slot_count", "collateral_token", "start_at", "end_at", "resolve_at", "resolved_at",
 ] as const;
+const VAULT_NUMERATOR_SELECTION = ["market_id", "index", "value"] as const;
+const VAULT_DENOMINATOR_SELECTION = ["market_id", "value"] as const;
 
 export interface FightersRepository {
   get(fighterId: bigint, options?: RequestOptions): Promise<DataResult<Fighter>>;
@@ -124,7 +128,7 @@ export function createFightersRepository(context: RepositoryContext): FightersRe
           model: "Fighter",
           selection: FIGHTER_SELECTION,
           first: 1,
-          where: { fighter_idEQ: fighterId.toString() },
+          where: { fighter_idEQ: normalizeFelt(fighterId) },
         }, options);
         const node = response.data.edges[0]?.node;
         if (!node) throw new AllSourcesFailedError("fighters.get", [...attempts, ...response.attempts]);
@@ -220,7 +224,7 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
           selection: FIGHT_SELECTION,
           first: clampPageSize(input.limit, context.budget.pageSize, 20),
           ...(input.cursor ? { after: input.cursor } : {}),
-          ...(input.seasonId === undefined ? {} : { where: { season_idEQ: input.seasonId.toString() } }),
+          ...(input.seasonId === undefined ? {} : { where: { season_idEQ: normalizeFelt(input.seasonId) } }),
         }, options);
         const items = response.data.edges.map((edge) => mapToriiFight(edge.node)).sort((a, b) => a.createdAt > b.createdAt ? -1 : 1);
         return result(context, startedAt, "torii", {
@@ -365,24 +369,24 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
       }
       if (!context.torii) throw new UnsupportedCapabilityError("fight buy enumeration");
       const requestedEnd = offset + size;
-      const fetchSize = Math.min(requestedEnd, context.budget.maxRpcItems);
+      const fetchSize = Math.min(requestedEnd, context.budget.maxToriiItems);
       const response = await context.torii.model<Record<string, unknown>>({
         model: "FightBuy",
         selection: FIGHT_BUY_SELECTION,
         first: Math.max(1, fetchSize),
-        where: { fight_idEQ: fightId.toString() },
+        where: { fight_idEQ: normalizeFelt(fightId) },
       }, options);
       const items = response.data.edges.slice(offset, requestedEnd).map((edge) => mapToriiFightBuy(edge.node));
       const nextOffset = offset + items.length;
       const hasMore = nextOffset < response.data.totalCount;
-      const budgetCapped = requestedEnd > context.budget.maxRpcItems;
+      const budgetCapped = requestedEnd > context.budget.maxToriiItems;
       return result(context, startedAt, "torii", {
         items,
         ...(hasMore && items.length > 0 ? { cursor: nextOffset } : {}),
         hasMore,
       }, response.attempts, !budgetCapped, budgetCapped ? [{
         code: "BUDGET_LIMIT",
-        message: `Fight buy pagination is capped at ${context.budget.maxRpcItems} Torii records.`,
+        message: `Fight buy pagination is capped at ${context.budget.maxToriiItems} Torii records.`,
         source: "torii",
       }] : []);
     },
@@ -456,6 +460,7 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
 export interface MarketsRepository {
   get(marketId: bigint, options?: RequestOptions): Promise<DataResult<Market>>;
   list(input?: { limit?: number; cursor?: string }, options?: RequestOptions): Promise<DataResult<Page<Market>>>;
+  catalog(input?: { limit?: number; cursor?: string }, options?: RequestOptions): Promise<DataResult<Page<MarketCatalogItem>>>;
   state(marketId: bigint, outcomeSlotCount: number, conditionId?: bigint, options?: RequestOptions): Promise<DataResult<MarketState>>;
   position(positionId: bigint, options?: RequestOptions): Promise<DataResult<MarketPosition>>;
   conditionalBalance(account: Address, positionId: bigint, options?: RequestOptions): Promise<DataResult<bigint>>;
@@ -484,6 +489,67 @@ export function createMarketsRepository(context: RepositoryContext): MarketsRepo
         ...(response.data.pageInfo.endCursor ? { cursor: response.data.pageInfo.endCursor } : {}),
         hasMore: response.data.pageInfo.hasNextPage,
       }, response.attempts);
+    },
+    async catalog(input = {}, options = {}) {
+      const startedAt = context.now();
+      if (!context.torii) throw new UnsupportedCapabilityError("market catalog without Torii");
+      try {
+        const [marketPage, fights, numerators, denominators] = await Promise.all([
+          context.torii.model<Record<string, unknown>>({
+            model: "Market",
+            selection: MARKET_SELECTION,
+            first: clampPageSize(input.limit, context.budget.pageSize, 20),
+            ...(input.cursor ? { after: input.cursor } : {}),
+          }, options),
+          readAllToriiModels(context, { model: "Fight", selection: FIGHT_SELECTION }, mapToriiFight, options),
+          readAllToriiModels(context, { model: "VaultNumerator", selection: VAULT_NUMERATOR_SELECTION }, (node) => ({
+            marketId: scalarBigInt(node.market_id, "market_id"),
+            index: scalarNumber(node.index, "index"),
+            value: scalarBigInt(node.value, "value"),
+          }), options),
+          readAllToriiModels(context, { model: "VaultDenominator", selection: VAULT_DENOMINATOR_SELECTION }, (node) => ({
+            marketId: scalarBigInt(node.market_id, "market_id"),
+            value: scalarBigInt(node.value, "value"),
+          }), options),
+        ]);
+
+        const fightByMarket = new Map(fights.items.map((fight) => [fight.marketId.toString(), fight]));
+        const numeratorByMarket = new Map<string, Map<number, bigint>>();
+        for (const numerator of numerators.items) {
+          const key = numerator.marketId.toString();
+          const values = numeratorByMarket.get(key) ?? new Map<number, bigint>();
+          values.set(numerator.index, numerator.value);
+          numeratorByMarket.set(key, values);
+        }
+        const denominatorByMarket = new Map(denominators.items.map((denominator) => [denominator.marketId.toString(), denominator.value]));
+        const items = marketPage.data.edges.map((edge): MarketCatalogItem => {
+          const market = mapToriiMarket(edge.node);
+          const key = market.marketId.toString();
+          const fight = fightByMarket.get(key);
+          return {
+            market,
+            ...(fight ? { fight } : {}),
+            vaultNumerators: Array.from(
+              { length: market.outcomeSlotCount },
+              (_, index) => numeratorByMarket.get(key)?.get(index) ?? 0n,
+            ),
+            vaultDenominator: denominatorByMarket.get(key) ?? 0n,
+          };
+        });
+        const warnings = [...fights.warnings, ...numerators.warnings, ...denominators.warnings];
+        return result(context, startedAt, "torii", {
+          items,
+          ...(marketPage.data.pageInfo.endCursor ? { cursor: marketPage.data.pageInfo.endCursor } : {}),
+          hasMore: marketPage.data.pageInfo.hasNextPage,
+        }, [
+          ...marketPage.attempts,
+          ...fights.attempts,
+          ...numerators.attempts,
+          ...denominators.attempts,
+        ], fights.complete && numerators.complete && denominators.complete, warnings);
+      } catch (error) {
+        throw new AllSourcesFailedError("markets.catalog", transportAttemptsFromError(error));
+      }
     },
     async state(marketId, outcomeSlotCount, conditionId, options = {}) {
       const startedAt = context.now();

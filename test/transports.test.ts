@@ -57,6 +57,7 @@ describe("RPC transports", () => {
       fallbackUrl: "https://rpc.example/path/../path",
       fetch,
       logger,
+      maxRetries: 0,
     });
 
     const error = await rpc.request("starknet_blockNumber").catch((value: unknown) => value);
@@ -64,6 +65,32 @@ describe("RPC transports", () => {
     expect(error).toMatchObject({ status: 429, transportCode: "HTTP_429" });
     expect(fetch).toHaveBeenCalledOnce();
     expect(logger.warn.mock.calls.some(([message]) => message === "Cage Calls RPC fallback selected.")).toBe(false);
+  });
+
+  it("retries JSON-RPC 429 responses with bounded exponential backoff before fallback", async () => {
+    let calls = 0;
+    const fetch = vi.fn(async () => {
+      calls += 1;
+      return calls < 3
+        ? json({ jsonrpc: "2.0", id: calls, error: { code: 429, message: "rate limited" } })
+        : json({ jsonrpc: "2.0", id: calls, result: 42 });
+    });
+    const rpc = createHttpRpcTransport({
+      url: "https://rpc.example",
+      fetch,
+      maxRetries: 2,
+      retryBaseDelayMs: 1,
+    });
+
+    const response = await rpc.request<number>("starknet_blockNumber");
+
+    expect(response.data).toBe(42);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(response.attempts.map((value) => [value.ok, value.errorCode])).toEqual([
+      [false, "RPC_429"],
+      [false, "RPC_429"],
+      [true, undefined],
+    ]);
   });
 
   it("does not fall back or warn when the caller aborts the primary request", async () => {

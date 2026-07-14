@@ -1,5 +1,6 @@
 export * from "./activity.js";
 export * from "./admin.js";
+export * from "./analytics.js";
 export * from "./calls.js";
 export * from "./client.js";
 export * from "./codecs.js";

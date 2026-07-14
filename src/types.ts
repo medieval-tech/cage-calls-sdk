@@ -132,6 +132,7 @@ export interface RequestBudget {
   maxRpcPages: number;
   maxRpcItems: number;
   maxToriiPages: number;
+  maxToriiItems: number;
   pageSize: number;
 }
 
@@ -237,6 +238,19 @@ export interface Market {
   endAt?: bigint;
   resolveAt?: bigint;
   resolvedAt?: bigint;
+}
+
+export interface AnalyticsSnapshot {
+  fights: Fight[];
+  buys: FightBuy[];
+  winnerChoiceByFight: Record<string, number>;
+}
+
+export interface MarketCatalogItem {
+  market: Market;
+  fight?: Fight;
+  vaultNumerators: bigint[];
+  vaultDenominator: bigint;
 }
 
 export interface MarketState {
