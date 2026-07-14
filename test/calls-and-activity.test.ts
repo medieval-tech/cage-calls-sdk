@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createCallBuilders,
+  createActivityRepository,
   createFightEventsRepository,
   createFightsRepository,
   decodeActivity,
@@ -97,6 +98,38 @@ describe("call plans and activity", () => {
     });
     expect(activity.type).toBe("unknown");
     expect(activity.raw.raw).toEqual({ future: true });
+  });
+
+  it("decodes block, transaction, and emitting contract from Torii event IDs", async () => {
+    const contract = "0x789";
+    const transactionHash = "0x456";
+    const context = {
+      network: MAINNET_PRESET,
+      rpc: createMockRpcTransport(),
+      torii: createMockToriiTransport({ events: {
+        edges: [{ cursor: "event-1", node: {
+          id: `0x123:${transactionHash}:${contract}:0x0`,
+          keys: ["0xabc"],
+          data: ["0xdef"],
+          executedAt: "2026-07-14T08:00:00+00:00",
+        } }],
+        totalCount: 1,
+        pageInfo: { hasNextPage: false },
+      } }),
+      capabilities: { has: () => false, probe: async () => false, snapshot: () => MAINNET_PRESET.capabilities },
+      budget: { timeoutMs: 1, maxConcurrency: 1, maxRpcPages: 1, maxRpcItems: 1, maxToriiPages: 1, pageSize: 20 },
+      now: () => 15_000,
+    } satisfies RepositoryContext;
+
+    const response = await createActivityRepository(context).raw({ limit: 1 });
+
+    expect(response.data.items[0]).toMatchObject({
+      blockNumber: 0x123n,
+      contract,
+      transactionHash,
+      timestamp: 1_784_016_000n,
+    });
+    expect(response.meta.warnings).toEqual([]);
   });
 
   it("keeps identically named events in different seasons separate", async () => {

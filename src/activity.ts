@@ -80,15 +80,32 @@ export function createActivityRepository(context: RepositoryContext): ActivityRe
         ...(input.cursor ? { after: input.cursor } : {}),
         ...(input.keys ? { keys: input.keys } : {}),
       }, options);
+      let inferredContract = false;
       const items = response.data.edges.map(({ node }) => {
+        const idParts = node.id.split(":");
+        let contract = context.network.worldAddress;
+        let blockNumber: bigint | undefined;
+        try {
+          if (idParts[2]) contract = normalizeAddress(idParts[2]);
+          else inferredContract = true;
+        } catch {
+          inferredContract = true;
+        }
+        try {
+          if (idParts[0]) blockNumber = BigInt(idParts[0]);
+        } catch {
+          // Older Torii event IDs may not include the block number.
+        }
         const event: RawCageCallsEvent = {
           ...(node.keys[0] ? { selector: normalizeFelt(node.keys[0]) } : {}),
-          contract: context.network.worldAddress,
+          contract,
+          ...(blockNumber === undefined ? {} : { blockNumber }),
           keys: node.keys.map((value) => normalizeFelt(value)),
           data: node.data.map((value) => normalizeFelt(value)),
           raw: node,
         };
-        if (node.transactionHash) event.transactionHash = normalizeFelt(node.transactionHash);
+        const transactionHash = node.transactionHash ?? idParts[1];
+        if (transactionHash) event.transactionHash = normalizeFelt(transactionHash);
         const timestamp = parseTimestamp(node.executedAt ?? node.createdAt);
         if (timestamp !== undefined) event.timestamp = timestamp;
         return event;
@@ -102,11 +119,11 @@ export function createActivityRepository(context: RepositoryContext): ActivityRe
         source: "torii",
         complete: true,
         attempts: response.attempts,
-        warnings: [{
+        warnings: inferredContract ? [{
           code: "EVENT_CONTRACT_INFERENCE",
-          message: "Torii generic events do not expose the emitting contract; registered Dojo events use the world address and retain raw keys.",
+          message: "A legacy Torii event ID omitted its emitting contract; the world address was used and raw keys were retained.",
           source: "torii",
-        }],
+        }] : [],
         startedAt,
         now: context.now,
         ...(context.logger ? { logger: context.logger } : {}),
