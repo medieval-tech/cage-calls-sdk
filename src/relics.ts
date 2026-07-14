@@ -252,21 +252,80 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     return toResult(context, startedAt, "starknet-rpc", relics, attempts, relics.length === unique.length && relics.every(metadataComplete), warnings);
   };
 
-  async function toriiOwned(owner: Address, attempts: SourceAttempt[], options: RequestOptions): Promise<Relic[]> {
-    if (!context.torii) return [];
+  async function hydrateToriiRelics(
+    relics: Relic[],
+    attempts: SourceAttempt[],
+    warnings: DataWarning[],
+    options: RequestOptions,
+  ): Promise<Relic[]> {
+    const incomplete = relics.filter((relic) => !metadataComplete(relic)).map((relic) => relic.tokenId);
+    if (incomplete.length === 0) return relics;
+    try {
+      const hydrated = await getMany(incomplete, options);
+      attempts.push(...hydrated.meta.attempts);
+      warnings.push(...hydrated.meta.warnings);
+      const byId = new Map(hydrated.data.map((relic) => [relic.tokenId.toString(), relic]));
+      return relics.map((relic) => mergeRelic(relic, byId.get(relic.tokenId.toString()) ?? relic));
+    } catch (error) {
+      attempts.push(...transportAttemptsFromError(error));
+      warnings.push({
+        code: "TORII_METADATA_HYDRATION_FAILED",
+        message: "Torii ownership was verified, but incomplete relic metadata could not be hydrated through RPC.",
+        source: "starknet-rpc",
+      });
+      return relics;
+    }
+  }
+
+  async function toriiOwned(
+    owner: Address,
+    attempts: SourceAttempt[],
+    options: RequestOptions,
+  ): Promise<{ relics: Relic[]; complete: boolean }> {
+    if (!context.torii) return { relics: [], complete: false };
     const relics = new Map<string, Relic>();
     let offset = 0;
+    let complete = false;
     for (let page = 0; page < context.budget.maxToriiPages; page += 1) {
       const response = await context.torii.tokenBalances(owner, { offset, limit: context.budget.pageSize }, options);
       attempts.push(...response.attempts);
       for (const edge of response.data.edges) {
         const mapped = edge.node.tokenMetadata ? mapToriiRelic(edge.node.tokenMetadata, context.network.contracts.RelicNFT) : undefined;
-        if (mapped) relics.set(mapped.tokenId.toString(), mapped);
+        if (mapped && relics.size < context.budget.maxRpcItems) relics.set(mapped.tokenId.toString(), mapped);
       }
       offset += response.data.edges.length;
-      if (response.data.edges.length === 0 || offset >= response.data.totalCount) break;
+      if (response.data.edges.length === 0 || offset >= response.data.totalCount) {
+        complete = true;
+        break;
+      }
+      if (relics.size >= context.budget.maxRpcItems) break;
     }
-    return Array.from(relics.values());
+    return { relics: Array.from(relics.values()), complete };
+  }
+
+  async function verifyToriiCandidates(
+    owner: Address,
+    candidates: Relic[],
+    attempts: SourceAttempt[],
+    warnings: DataWarning[],
+    options: RequestOptions,
+  ): Promise<Relic[]> {
+    const verified = (await mapConcurrent(candidates, context.budget.maxConcurrency, async (relic) => {
+      try {
+        const response = await rpcCall(context, "owner_of", encodeU256(relic.tokenId), options);
+        attempts.push(...response.attempts);
+        return response.data[0] && sameAddress(response.data[0], owner) ? relic : undefined;
+      } catch (error) {
+        attempts.push(...transportAttemptsFromError(error));
+        return undefined;
+      }
+    })).filter((value): value is Relic => value !== undefined);
+    warnings.push({
+      code: "TORII_CANDIDATE_RPC_VERIFICATION",
+      message: `RPC ownership verification retained ${verified.length} of ${candidates.length} Torii relic candidates.`,
+      source: "starknet-rpc",
+    });
+    return hydrateToriiRelics(verified, attempts, warnings, options);
   }
 
   async function verifyToriiInventory(owner: Address, attempts: SourceAttempt[], options: RequestOptions): Promise<{ relics: Relic[]; complete: boolean }> {
@@ -303,7 +362,13 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     return { relics: hydrated.data, complete };
   }
 
-  async function rpcOwned(owner: Address, attempts: SourceAttempt[], warnings: DataWarning[], options: RequestOptions): Promise<{ relics: Relic[]; complete: boolean }> {
+  async function rpcOwned(
+    owner: Address,
+    toriiInventory: { relics: Relic[]; complete: boolean },
+    attempts: SourceAttempt[],
+    warnings: DataWarning[],
+    options: RequestOptions,
+  ): Promise<{ relics: Relic[]; complete: boolean }> {
     const ownerPage = context.capabilities.has("relicOwnerPage") || await context.capabilities.probe("relicOwnerPage", options.signal);
     if (ownerPage) {
       const relics = new Map<string, Relic>();
@@ -344,6 +409,11 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       warnings.push({ code: "LEGACY_RELIC_SCAN", message: "Ownership used the capped legacy relic feed scan.", source: "starknet-rpc" });
       const hydrated = await mapConcurrent(Array.from(relics.values()), context.budget.maxConcurrency, (relic) => hydrateJson(context, relic, attempts, warnings, options));
       return { relics: hydrated, complete };
+    }
+
+    if (toriiInventory.relics.length > 0) {
+      const relics = await verifyToriiCandidates(owner, toriiInventory.relics, attempts, warnings, options);
+      if (relics.length > 0) return { relics, complete: toriiInventory.complete };
     }
 
     warnings.push({ code: "TORII_INVENTORY_RPC_VERIFICATION", message: "The deployment lacks owner pagination; token ownership was verified individually through RPC.", source: "starknet-rpc" });
@@ -403,19 +473,13 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
         }, attempts, true);
       }
 
-      let torii: Relic[] = [];
+      let toriiInventory: { relics: Relic[]; complete: boolean } = { relics: [], complete: false };
       if (context.torii) {
         try {
-          torii = await toriiOwned(owner, attempts, options);
+          toriiInventory = await toriiOwned(owner, attempts, options);
+          let torii = toriiInventory.relics;
           if (BigInt(torii.length) === balance) {
-            const incomplete = torii.filter((relic) => !metadataComplete(relic)).map((relic) => relic.tokenId);
-            if (incomplete.length > 0) {
-              const hydrated = await getMany(incomplete, options);
-              attempts.push(...hydrated.meta.attempts);
-              const byId = new Map(hydrated.data.map((relic) => [relic.tokenId.toString(), relic]));
-              torii = torii.map((relic) => mergeRelic(relic, byId.get(relic.tokenId.toString()) ?? relic));
-              warnings.push(...hydrated.meta.warnings);
-            }
+            torii = await hydrateToriiRelics(torii, attempts, warnings, options);
             return toResult(context, startedAt, "torii", {
               items: torii.map((relic) => ({ ...relic, owner, ownershipSource: "torii" as const })),
               hasMore: false,
@@ -430,15 +494,16 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       }
 
       try {
-        const discovered = await rpcOwned(owner, attempts, warnings, options);
+        const discovered = await rpcOwned(owner, toriiInventory, attempts, warnings, options);
         const verified = BigInt(discovered.relics.length) === balance;
         if (discovered.relics.length === 0 && balance > 0n) throw new AllSourcesFailedError("relics.owned", attempts);
         if (!verified) warnings.push({ code: "RPC_BALANCE_MISMATCH", message: `RPC discovery found ${discovered.relics.length} of ${balance} relics.`, source: "starknet-rpc" });
+        const inventoryComplete = verified || discovered.complete;
         return toResult(context, startedAt, "starknet-rpc", {
           items: discovered.relics.map((relic) => ({ ...relic, owner, ownershipSource: "starknet-rpc" as const })),
-          hasMore: !discovered.complete,
+          hasMore: !inventoryComplete,
           provenance: { owner, onchainBalance: balance, ownershipSource: "starknet-rpc", verified },
-        }, attempts, discovered.complete && verified && discovered.relics.every(metadataComplete), warnings);
+        }, attempts, verified && discovered.relics.every(metadataComplete), warnings);
       } catch (error) {
         if (error instanceof AllSourcesFailedError) throw error;
         throw new AllSourcesFailedError("relics.owned", [...attempts, ...transportAttemptsFromError(error)]);
