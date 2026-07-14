@@ -1,0 +1,82 @@
+{
+  "upstream": {
+    "repository": "https://github.com/medieval-tech/cage-calls-smartcontracts",
+    "manifests": {
+      "mainnet": {
+        "commit": "bdb5df7460a20397450c4734d2475c057471c47c",
+        "sha256": "5a01f7129458756af4dde9981e87ac7d40ef6291441e293d246ce43450e05079"
+      },
+      "sepolia-dev": {
+        "commit": "fae46fcfff3d37d81cb70fd777c467c893e2df8a",
+        "sha256": "65027759b0e11174e6acbc83f96b1bb70c63d54e5e6417f81005720741afbf14"
+      },
+      "sepolia-staging": {
+        "commit": "6832405b1a10b50b7e547bfed5d4633470c2522a",
+        "sha256": "9d551e77135375c8faac459d55a9d56a7bc7255ac0b246f832819e7fcdcfa6cd"
+      }
+    }
+  },
+  "vrfAddress": "0x051fea4450da9d6aee758bdeba88b2f665bcbf549d2c61421aa724e9ac0ced8f",
+  "networks": {
+    "mainnet": {
+      "chainId": "0x534e5f4d41494e",
+      "worldAddress": "0x662ad99065a4a559811be788dbcf863b6bd96ea7d9a0ed9e4ebe22eb74e564d",
+      "toriiUrl": "https://torii-mainnet.medievaltech.xyz",
+      "cartridgeRpcUrl": "https://api.cartridge.gg/x/starknet/mainnet/rpc/v0_9",
+      "contracts": {
+        "CALLS": ["0xc79fb09624ed4dc9cab576c88675e41b2597488c59b9f8cda22a10295809de", "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300"],
+        "CageCallsOracle": ["0x6fdc6d75d1cf67e85264a7fdc1526784239d98b6e92b448083056b1d695e6d7", "0x6b54f7b9bf5959362df92b163d08a0c9a921736ed0044b8a9ca446c4cd39790"],
+        "ConditionalTokens": ["0x1a82fdc46fe31baa218af8a74e1f64318199e8f4c40acf5e2039e3280daee7d", "0x6435347fd999d80f72fde6e95ca6c8c832ef65bb46630a9fc76ed7fc98e974b"],
+        "FightFactory": ["0x4beec9af84d93aa84a6b5c71033ade6fa0de40a2359d8599170a6d544ccbf30", "0x76c944513ed942a34a398eb6d7715479ab1c63f2ae1f91093e2a9d3b8ea10ed"],
+        "FighterRegistry": ["0x1fd30557f4cc878c0f269b47917576481a752fe52a3b384536deafd6a857a03", "0x1ae70de72ac445d345ffaa783db57da5b489b4fe2c97147b6141caa3dcfe6cf"],
+        "Gacha": ["0x3ce374b612858e7cf674821f1f17b48b0000c1d45b659e1a2fb532adee499de", "0x3a2979e2775a2659ba95552a7921bec157a6cba8e1f5a46a19ae4ba1fce852e"],
+        "Markets": ["0x5091800bc514678dfc8d409d7baa506791f3b589b283a795176fd307e20945c", "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12"],
+        "RelicNFT": ["0x6f63afcf7b5251c82df3b01090b2b43e81727ec5350f7f0a3a6f43203bcc63a", "0x109910e72e75e100f5354a5061733397b551934b0a310e802bd2fbbdc9417e3"],
+        "StrikeTickets": ["0x486a8a492759a4ab622ea19a3f1a6e5b2e784fb6c672346b033f8b7dfc8edd5", "0x6f5d99084de5e581da00408c0d44b9267a695184c346f69780d4ee2d8e9ebde"],
+        "VaultFees": ["0x5fdd338f6b4e60962e6372a708179a010ece20543a84004402098c17e323aa3", "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e"],
+        "VaultPositions": ["0x1036cc389d07693bab59080cc4a89df2db9000109530423f520e61adc8b0040", "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730"]
+      },
+      "capabilities": { "fightFeed": false, "fightBuyPagination": false, "relicFeed": false, "relicBatch": false, "relicOwnerPage": false, "fighterBatch": false, "gachaPoolAggregate": false, "gachaAvailableTokenIds": false }
+    },
+    "sepolia-dev": {
+      "chainId": "0x534e5f5345504f4c4941",
+      "worldAddress": "0x1401498e3b1d0d155d28aac566d878536c9b32e8ff470a944e49e84bee2df62",
+      "toriiUrl": "https://api.cartridge.gg/x/pm-cagecalls-sepolia-dev/torii",
+      "cartridgeRpcUrl": "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_9",
+      "contracts": {
+        "CALLS": ["0x41e71cb49fb73a5f543fee74033616eaf867290b0da4613ec4758cca30c5ea", "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300"],
+        "CageCallsOracle": ["0x248c6a641408d01ced97fce08dee2e6f571b91a23c66f1cffbd1c4a3fa429cf", "0x6b54f7b9bf5959362df92b163d08a0c9a921736ed0044b8a9ca446c4cd39790"],
+        "ConditionalTokens": ["0x3f971ab29f165e161b90cb8729860cb2bd9c908f4d737f95560c31990a55601", "0x6435347fd999d80f72fde6e95ca6c8c832ef65bb46630a9fc76ed7fc98e974b"],
+        "FightFactory": ["0x1670eda99191a36ea41c5af2bf029363a8fb689719b0636087d587b03271d7c", "0xe3d6d522657e99a197c426d8dd6814d8cc8ac3ffca9cb58f4ea368149e8ac"],
+        "FighterRegistry": ["0x4b079fb1ce72f45e099eec2b2cf70748712384848ae216b071e9b10bc10f495", "0x1ae70de72ac445d345ffaa783db57da5b489b4fe2c97147b6141caa3dcfe6cf"],
+        "Gacha": ["0x218981e7d2ee55e2c67f67ae37631a619a22390de281155fb789fbaaad8eca8", "0x3a2979e2775a2659ba95552a7921bec157a6cba8e1f5a46a19ae4ba1fce852e"],
+        "Markets": ["0x6d5c42bc161310f8dc230c5b5e61e05354c133a95b22707b1f22c6c7e735ed5", "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12"],
+        "RelicNFT": ["0x3a5644f732e701ff98822ae59327d3181507ddee5e7aba63bc6fe0a24a61c40", "0x107fadedf949739eb06f763c2d28b01c08c51f3dab586b55a14a545abac8088"],
+        "StrikeTickets": ["0x149ffda903243d0edeefa289c3d90713c29e797de508883bdc25bbad8b06db2", "0x6f5d99084de5e581da00408c0d44b9267a695184c346f69780d4ee2d8e9ebde"],
+        "VaultFees": ["0x3b68e61258384337d1a7e6d0fe82d4a13e8036ae9345ded5e8a269b1ad07a0c", "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e"],
+        "VaultPositions": ["0x78c5caae484ea442b9469741a074e6f632401463fa4e5511a276ec47b1f1d01", "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730"]
+      },
+      "capabilities": { "fightFeed": true, "fightBuyPagination": true, "relicFeed": true, "relicBatch": false, "relicOwnerPage": false, "fighterBatch": false, "gachaPoolAggregate": false, "gachaAvailableTokenIds": false }
+    },
+    "sepolia-staging": {
+      "chainId": "0x534e5f5345504f4c4941",
+      "worldAddress": "0x65586aa40bececc31422af9008293dabe6ddedbe091632e9a481ca68657cda5",
+      "toriiUrl": "https://api.cartridge.gg/x/pm-cagecalls-sepolia-staging/torii",
+      "cartridgeRpcUrl": "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_9",
+      "contracts": {
+        "CALLS": ["0x34c6b2b62a58f9b0ca8229eb24194e3f7f6e544e4ff900507d5db015a5a9e82", "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300"],
+        "CageCallsOracle": ["0x644eaf9aac1bf8a1fb74853d15f140522005f7386c7f4ae3de85ceecd52ea08", "0x6b54f7b9bf5959362df92b163d08a0c9a921736ed0044b8a9ca446c4cd39790"],
+        "ConditionalTokens": ["0xc462f36032355f28a8f0d81279c332ab7da4c4e9e460d2528e235771c59c66", "0x6435347fd999d80f72fde6e95ca6c8c832ef65bb46630a9fc76ed7fc98e974b"],
+        "FightFactory": ["0x416b01c9c5ec58fbb8353618934dbce01c690f0c4cafd5a89375f45b0082d62", "0x76c944513ed942a34a398eb6d7715479ab1c63f2ae1f91093e2a9d3b8ea10ed"],
+        "FighterRegistry": ["0x5285b4a716aec146b2460aeb129e8bc9ddbcf20b063d8b66c7a5b6c63e600bd", "0x1ae70de72ac445d345ffaa783db57da5b489b4fe2c97147b6141caa3dcfe6cf"],
+        "Gacha": ["0x1c4c21df2f4f02d48e8fb275d62c72b5cba27598e561ded0e2290a16cdbdce6", "0x3a2979e2775a2659ba95552a7921bec157a6cba8e1f5a46a19ae4ba1fce852e"],
+        "Markets": ["0x6cc64e6ecc0f034df29ab7f5e5bb3b9f9f34db55eab8d0a73beb5a6c421b47d", "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12"],
+        "RelicNFT": ["0x1073368825e39bb674faaf4ac561069276a6ad9a05fe1fc20604f133277426e", "0x109910e72e75e100f5354a5061733397b551934b0a310e802bd2fbbdc9417e3"],
+        "StrikeTickets": ["0x354d813e57fe6e75a318b55e76253846bf100a718929f72124c3ec1cf795fd9", "0x6f5d99084de5e581da00408c0d44b9267a695184c346f69780d4ee2d8e9ebde"],
+        "VaultFees": ["0x48ffc5214524498eca29341129f998634bc1b559219dcc632fb6f727186f099", "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e"],
+        "VaultPositions": ["0x356065a95fc27771a672331148c3b02c4a2a2f6161b88631e7a33a0616a7903", "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730"]
+      },
+      "capabilities": { "fightFeed": false, "fightBuyPagination": false, "relicFeed": false, "relicBatch": false, "relicOwnerPage": false, "fighterBatch": false, "gachaPoolAggregate": false, "gachaAvailableTokenIds": false }
+    }
+  }
+}

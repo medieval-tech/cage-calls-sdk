@@ -1,0 +1,5 @@
+{
+  "appId": "tech.medieval.cagecalls.fixture",
+  "appName": "Cage Calls SDK Fixture",
+  "webDir": "../../.fixture-dist/capacitor"
+}

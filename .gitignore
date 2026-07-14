@@ -1,0 +1,7 @@
+node_modules
+dist
+coverage
+temp
+.fixture-dist
+*.tgz
+.DS_Store

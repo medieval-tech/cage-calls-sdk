@@ -1,0 +1,117 @@
+{
+  "name": "@medieval-tech/cage-calls-sdk",
+  "version": "0.1.0-next.0",
+  "description": "Framework-neutral TypeScript SDK for Cage Calls",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.22.0",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./react": {
+      "import": {
+        "types": "./dist/react.d.ts",
+        "default": "./dist/react.js"
+      },
+      "require": {
+        "types": "./dist/react.d.cts",
+        "default": "./dist/react.cjs"
+      }
+    },
+    "./cartridge": {
+      "import": {
+        "types": "./dist/cartridge.d.ts",
+        "default": "./dist/cartridge.js"
+      },
+      "require": {
+        "types": "./dist/cartridge.d.cts",
+        "default": "./dist/cartridge.cjs"
+      }
+    },
+    "./testing": {
+      "import": {
+        "types": "./dist/testing.d.ts",
+        "default": "./dist/testing.js"
+      },
+      "require": {
+        "types": "./dist/testing.d.cts",
+        "default": "./dist/testing.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "check": "pnpm generate:check && pnpm typecheck && pnpm test && pnpm build && pnpm check:runtimes && pnpm api:check && pnpm check:core-boundary && pnpm check:bundle",
+    "check:bundle": "node scripts/check-bundle.mjs",
+    "check:core-boundary": "node scripts/check-core-boundary.mjs",
+    "check:runtimes": "pnpm check:node && pnpm check:ssr && pnpm check:vite && pnpm check:capacitor",
+    "check:node": "node examples/node.mjs",
+    "check:ssr": "node examples/ssr.mjs",
+    "check:vite": "vite build --config examples/vite/vite.config.ts",
+    "check:capacitor": "vite build --config examples/capacitor/vite.config.ts",
+    "generate": "node scripts/generate-deployments.mjs",
+    "generate:check": "node scripts/generate-deployments.mjs --check",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "api": "api-extractor run --local",
+    "api:check": "api-extractor run"
+  },
+  "peerDependencies": {
+    "@tanstack/react-query": "^5.62.0",
+    "react": "^18.2.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@tanstack/react-query": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.29.4",
+    "@microsoft/api-extractor": "^7.52.11",
+    "@tanstack/react-query": "^5.90.19",
+    "@types/node": "^18.19.87",
+    "@types/react": "^18.3.20",
+    "@vitest/coverage-v8": "2.1.9",
+    "react": "^18.3.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vitest": "2.1.9"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/medieval-tech/cage-calls-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/medieval-tech/cage-calls-sdk/issues"
+  },
+  "homepage": "https://github.com/medieval-tech/cage-calls-sdk#readme"
+}

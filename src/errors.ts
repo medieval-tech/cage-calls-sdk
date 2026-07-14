@@ -1,0 +1,72 @@
+import type { DataSource, SourceAttempt } from "./types.js";
+
+export type CageCallsErrorCode =
+  | "CONFIGURATION_ERROR"
+  | "VALIDATION_ERROR"
+  | "UNSUPPORTED_CAPABILITY"
+  | "TRANSPORT_ERROR"
+  | "ALL_SOURCES_FAILED"
+  | "DECODE_ERROR";
+
+export class CageCallsSdkError extends Error {
+  readonly code: CageCallsErrorCode;
+  readonly details?: Readonly<Record<string, unknown>>;
+
+  constructor(code: CageCallsErrorCode, message: string, details?: Readonly<Record<string, unknown>>, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "CageCallsSdkError";
+    this.code = code;
+    if (details) this.details = details;
+  }
+}
+
+export class ConfigurationError extends CageCallsSdkError {
+  constructor(message: string, details?: Readonly<Record<string, unknown>>) {
+    super("CONFIGURATION_ERROR", message, details);
+    this.name = "ConfigurationError";
+  }
+}
+
+export class ValidationError extends CageCallsSdkError {
+  constructor(message: string, details?: Readonly<Record<string, unknown>>) {
+    super("VALIDATION_ERROR", message, details);
+    this.name = "ValidationError";
+  }
+}
+
+export class UnsupportedCapabilityError extends CageCallsSdkError {
+  constructor(capability: string, details?: Readonly<Record<string, unknown>>) {
+    super("UNSUPPORTED_CAPABILITY", `Deployment does not support ${capability}.`, { capability, ...details });
+    this.name = "UnsupportedCapabilityError";
+  }
+}
+
+export class TransportError extends CageCallsSdkError {
+  readonly source: DataSource;
+  readonly status?: number;
+
+  constructor(source: DataSource, message: string, options: { status?: number; cause?: unknown } = {}) {
+    const details = options.status === undefined ? undefined : { status: options.status };
+    super("TRANSPORT_ERROR", message, details, options.cause === undefined ? undefined : { cause: options.cause });
+    this.name = "TransportError";
+    this.source = source;
+    if (options.status !== undefined) this.status = options.status;
+  }
+}
+
+export class AllSourcesFailedError extends CageCallsSdkError {
+  readonly attempts: SourceAttempt[];
+
+  constructor(operation: string, attempts: SourceAttempt[]) {
+    super("ALL_SOURCES_FAILED", `All configured sources failed for ${operation}.`, { operation, attempts });
+    this.name = "AllSourcesFailedError";
+    this.attempts = attempts;
+  }
+}
+
+export class DecodeError extends CageCallsSdkError {
+  constructor(message: string, details?: Readonly<Record<string, unknown>>, options?: ErrorOptions) {
+    super("DECODE_ERROR", message, details, options);
+    this.name = "DecodeError";
+  }
+}
