@@ -100,6 +100,27 @@ describe("call plans and activity", () => {
     expect(activity.raw.raw).toEqual({ future: true });
   });
 
+  it("decodes registered Dojo events through the EventEmitted wrapper", () => {
+    const activity = decodeActivity("sepolia-dev", {
+      selector: "0x1c93f6e4703ae90f75338f29bffbe9c1662200cee981f49afeec26e892debcd",
+      contract: MAINNET_PRESET.worldAddress,
+      keys: [
+        "0x1c93f6e4703ae90f75338f29bffbe9c1662200cee981f49afeec26e892debcd",
+        "0x59cd6e838e5a04ad17b8dca262ade7c17dcfdbc78044b478d6a70f46ffbd5a4",
+        "0x123",
+      ],
+      data: ["0x456"],
+      raw: {},
+    });
+
+    expect(activity.type).toBe("market-lifecycle");
+    expect(activity.payload).toEqual({
+      eventName: "MarketCreated",
+      keys: ["0x123"],
+      data: ["0x456"],
+    });
+  });
+
   it("decodes block, transaction, and emitting contract from Torii event IDs", async () => {
     const contract = "0x789";
     const transactionHash = "0x456";

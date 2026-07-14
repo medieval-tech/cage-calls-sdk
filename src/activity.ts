@@ -28,7 +28,23 @@ const EVENT_TYPES = new Map<string, { name: string; type: CageCallsActivity["typ
   [selectorFromName("ConditionResolution"), { name: "ConditionResolution", type: "conditional-token", action: "resolution" }],
   [selectorFromName("PositionSplit"), { name: "PositionSplit", type: "conditional-token", action: "split" }],
   [selectorFromName("PositionsMerge"), { name: "PositionsMerge", type: "conditional-token", action: "merge" }],
+  // Dojo resource selectors from the pinned `pm` manifests. Registered events
+  // are wrapped by EventEmitted and use these selectors as their second key.
+  ["0x644e1bb97b57df49a85972b4c2cbf1788385071f02f85afce24e573512909ab", { name: "FightCreated", type: "fight-created" }],
+  ["0x59cd6e838e5a04ad17b8dca262ade7c17dcfdbc78044b478d6a70f46ffbd5a4", { name: "MarketCreated", type: "market-lifecycle" }],
+  ["0x4cdcbcd64b50bc7598b8fe9bf10edde9aa262dc8170630c67d4dbbcb4122c57", { name: "MarketBuy", type: "market-buy" }],
+  ["0x7efeccfe4aa8429dbb06301e9cf86ec73eb12af2f2396431e7d97465ba5f6bf", { name: "PayoutRedemption", type: "payout-redemption" }],
+  ["0x1b420058b6f6722043e1dc5d490fefa894ccd9ddd21dea09363300d55ccbf7c", { name: "FighterRegistered", type: "fighter-registration" }],
+  ["0x21be506d0fef670626b1e0ad9bfba41dcc9de1c07796e457ca2d3b805b22c82", { name: "FighterUpdated", type: "fighter-update" }],
+  ["0x654accbd51b3c7b7aad0a69efb22759bd73baea52472335a10329afaf7df1b0", { name: "FighterActivated", type: "fighter-activation" }],
+  ["0x42e9c702491f1c8d4859d3f7721e33d2d7b077c4e068dbb3c2c854c5f8d075d", { name: "FighterDeactivated", type: "fighter-activation" }],
+  ["0x7af67d3e52eac00b3370db7ffd64e03029873cb2e08ac7bf4b75f9812e9a470", { name: "ConditionPreparation", type: "conditional-token", action: "preparation" }],
+  ["0x49bf93e98a06453ffc513d92d4a31e367226d96bd4c76f9ef72f0e2f1e8937e", { name: "ConditionResolution", type: "conditional-token", action: "resolution" }],
+  ["0x19c206ec72a0716df29ab279b998e7abb63b46ef4fa8a685eae62ab7c6c7a9c", { name: "PositionSplit", type: "conditional-token", action: "split" }],
+  ["0x43df21642b961fb90fbd9623c068a1cc5a57b202591b1588fed885fdeb80d4b", { name: "PositionsMerge", type: "conditional-token", action: "merge" }],
 ]);
+
+const DOJO_EVENT_EMITTED = selectorFromName("EventEmitted");
 
 function parseTimestamp(value?: string): bigint | undefined {
   if (!value) return undefined;
@@ -37,7 +53,8 @@ function parseTimestamp(value?: string): bigint | undefined {
 }
 
 export function decodeActivity(network: string, event: RawCageCallsEvent): CageCallsActivity {
-  const selector = event.selector ?? event.keys[0];
+  const dojoResourceSelector = event.keys[0] === DOJO_EVENT_EMITTED ? event.keys[1] : undefined;
+  const selector = dojoResourceSelector ?? event.selector ?? event.keys[0];
   const definition = selector ? EVENT_TYPES.get(normalizeFelt(selector)) : undefined;
   const base = {
     network,
@@ -47,7 +64,11 @@ export function decodeActivity(network: string, event: RawCageCallsEvent): CageC
     ...(event.timestamp === undefined ? {} : { timestamp: event.timestamp }),
     raw: event,
   };
-  const payload: Record<string, unknown> = { keys: event.keys.slice(1), data: event.data };
+  const payload: Record<string, unknown> = {
+    keys: event.keys.slice(dojoResourceSelector ? 2 : 1),
+    data: event.data,
+    ...(definition ? { eventName: definition.name } : {}),
+  };
   switch (definition?.type) {
     case "fight-created": return { ...base, type: "fight-created", payload };
     case "market-buy": return { ...base, type: "market-buy", payload };
