@@ -41,7 +41,7 @@
     "sepolia-dev": {
       "chainId": "0x534e5f5345504f4c4941",
       "worldAddress": "0x1401498e3b1d0d155d28aac566d878536c9b32e8ff470a944e49e84bee2df62",
-      "toriiUrl": "https://api.cartridge.gg/x/pm-cagecalls-sepolia-dev/torii",
+      "toriiUrl": "https://pm-cagecalls-sep-dev-torii.fly.dev",
       "cartridgeRpcUrl": "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_9",
       "contracts": {
         "CALLS": ["0x41e71cb49fb73a5f543fee74033616eaf867290b0da4613ec4758cca30c5ea", "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300"],
@@ -61,7 +61,7 @@
     "sepolia-staging": {
       "chainId": "0x534e5f5345504f4c4941",
       "worldAddress": "0x65586aa40bececc31422af9008293dabe6ddedbe091632e9a481ca68657cda5",
-      "toriiUrl": "https://api.cartridge.gg/x/pm-cagecalls-sepolia-staging/torii",
+      "toriiUrl": "https://pm-cagecalls-sep-stg-torii.fly.dev",
       "cartridgeRpcUrl": "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_9",
       "contracts": {
         "CALLS": ["0x34c6b2b62a58f9b0ca8229eb24194e3f7f6e544e4ff900507d5db015a5a9e82", "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300"],

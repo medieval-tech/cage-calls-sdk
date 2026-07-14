@@ -100,7 +100,7 @@ const presets = {
       "VaultFees": "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e",
       "VaultPositions": "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730"
     },
-    "toriiUrl": "https://api.cartridge.gg/x/pm-cagecalls-sepolia-dev/torii",
+    "toriiUrl": "https://pm-cagecalls-sep-dev-torii.fly.dev",
     "cartridgeRpcUrl": "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_9",
     "vrfAddress": "0x051fea4450da9d6aee758bdeba88b2f665bcbf549d2c61421aa724e9ac0ced8f",
     "capabilities": {
@@ -147,7 +147,7 @@ const presets = {
       "VaultFees": "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e",
       "VaultPositions": "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730"
     },
-    "toriiUrl": "https://api.cartridge.gg/x/pm-cagecalls-sepolia-staging/torii",
+    "toriiUrl": "https://pm-cagecalls-sep-stg-torii.fly.dev",
     "cartridgeRpcUrl": "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_9",
     "vrfAddress": "0x051fea4450da9d6aee758bdeba88b2f665bcbf549d2c61421aa724e9ac0ced8f",
     "capabilities": {
