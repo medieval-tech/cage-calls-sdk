@@ -7,7 +7,6 @@ export const DEFAULT_REQUEST_BUDGET: Readonly<RequestBudget> = Object.freeze({
   maxRpcPages: 20,
   maxRpcItems: 2_000,
   maxToriiPages: 20,
-  maxAlchemyPages: 20,
   pageSize: 100,
 });
 

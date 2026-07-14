@@ -1,8 +1,6 @@
 import { createCageCallsClient, type CageCallsClient, type CreateCageCallsClientOptions } from "./client.js";
 import { MAINNET_PRESET } from "./network.js";
 import type {
-  AlchemyNft,
-  AlchemyNftTransport,
   MetadataTransport,
   RpcCall,
   RpcTransport,
@@ -83,19 +81,6 @@ export function createMockToriiTransport(input: {
     async tokens() {
       if (input.tokens instanceof Error) throw input.tokens;
       return ok(input.tokens ?? { edges: [], totalCount: 0 }, "torii", "tokens");
-    },
-  };
-}
-
-export function createMockAlchemyNftTransport(input: { supported?: boolean; owned?: AlchemyNft[]; error?: Error } = {}): AlchemyNftTransport {
-  return {
-    async supportsContract() {
-      if (input.error) throw input.error;
-      return ok(input.supported ?? true, "alchemy-nft", "contract-probe");
-    },
-    async ownedNfts() {
-      if (input.error) throw input.error;
-      return ok(input.owned ?? [], "alchemy-nft", "owned-nfts");
     },
   };
 }

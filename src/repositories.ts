@@ -260,22 +260,92 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
     async feed(input = {}, options = {}) {
       const startedAt = context.now();
       const supported = context.capabilities.has("fightFeed") || await context.capabilities.probe("fightFeed", options.signal);
-      if (!supported) throw new UnsupportedCapabilityError("fight aggregate feed", { network: context.network.name });
       const size = clampPageSize(input.limit, 20, 20);
-      const start = input.cursor ?? 0n;
-      const response = await rpcCall(context, "FightFactory", "get_fight_feed", [
-        ...encodeU256(start),
-        size.toString(),
-        normalizeAddress(input.viewer ?? "0x0"),
-      ], options);
-      const items = decodeFightFeedRpc(response.data);
-      const oldest = items.at(-1)?.fightId ?? 0n;
-      const cursor = oldest > 1n ? oldest - 1n : 0n;
-      return result(context, startedAt, "starknet-rpc", { items, cursor, hasMore: items.length === size && cursor > 0n }, response.attempts);
+      const viewer = normalizeAddress(input.viewer ?? "0x0");
+      if (supported) {
+        const start = input.cursor ?? 0n;
+        const response = await rpcCall(context, "FightFactory", "get_fight_feed", [
+          ...encodeU256(start),
+          size.toString(),
+          viewer,
+        ], options);
+        const items = decodeFightFeedRpc(response.data);
+        const oldest = items.at(-1)?.fightId ?? 0n;
+        const cursor = oldest > 1n ? oldest - 1n : 0n;
+        return result(context, startedAt, "starknet-rpc", { items, cursor, hasMore: items.length === size && cursor > 0n }, response.attempts);
+      }
+
+      const attempts: SourceAttempt[] = [];
+      let cursor = input.cursor ?? 0n;
+      if (cursor === 0n) {
+        const next = await rpcCall(context, "FightFactory", "next_fight_id", [], options);
+        attempts.push(...next.attempts);
+        const nextId = decodeSingleU256(next.data, "nextFightId");
+        cursor = nextId > 0n ? nextId - 1n : 0n;
+      }
+      const ids: bigint[] = [];
+      while (cursor > 0n && ids.length < size) ids.push(cursor--);
+      const markets = createMarketsRepository(context);
+      const items = await mapConcurrent(ids, context.budget.maxConcurrency, async (fightId): Promise<FightFeedItem> => {
+        const fightResult = await get(fightId, options);
+        const marketResult = await markets.get(fightResult.data.marketId, options);
+        const [stateResult, potResult, viewerResult] = await Promise.all([
+          markets.state(marketResult.data.marketId, marketResult.data.outcomeSlotCount, marketResult.data.conditionId, options),
+          createFightsRepository(context).potState(fightId, options),
+          viewer === normalizeAddress("0")
+            ? Promise.resolve(result(context, startedAt, "derived", {
+                hasBought: false,
+                shares: 0n,
+                boughtAt: 0n,
+                hasRedeemed: false,
+                isWinner: false,
+                strikeTickets: 0n,
+              }, []))
+            : createFightsRepository(context).viewerState(fightId, viewer, options),
+        ]);
+        attempts.push(
+          ...fightResult.meta.attempts,
+          ...marketResult.meta.attempts,
+          ...stateResult.meta.attempts,
+          ...potResult.meta.attempts,
+          ...viewerResult.meta.attempts,
+        );
+        const market = marketResult.data;
+        return {
+          ...fightResult.data,
+          marketCreatedAt: market.createdAt,
+          conditionId: market.conditionId,
+          oracle: market.oracle,
+          outcomeSlotCount: market.outcomeSlotCount,
+          collateralToken: market.collateralToken,
+          startAt: market.startAt ?? 0n,
+          endAt: market.endAt ?? 0n,
+          resolveAt: market.resolveAt ?? 0n,
+          resolvedAt: market.resolvedAt ?? 0n,
+          vaultNumerators: stateResult.data.vaultNumerators,
+          vaultDenominator: stateResult.data.vaultDenominator,
+          outcomeCounts: [],
+          outcomeShares: stateResult.data.outcomeShares ?? [],
+          payoutNumerators: stateResult.data.payoutNumerators,
+          payoutDenominator: stateResult.data.payoutDenominator,
+          pot: potResult.data,
+          viewer: viewerResult.data,
+        };
+      });
+      return result(context, startedAt, "starknet-rpc", {
+        items,
+        cursor,
+        hasMore: ids.length === size && cursor > 0n,
+      }, attempts, false, [{
+        code: "AGGREGATE_VIEW_FALLBACK",
+        message: "Fight feed used bounded singleton RPC views because the aggregate view is unavailable.",
+        source: "starknet-rpc",
+      }]);
     },
     async buys(fightId, input = {}, options = {}) {
       const startedAt = context.now();
       const offset = input.offset ?? 0;
+      if (!Number.isSafeInteger(offset) || offset < 0) throw new ValidationError("offset must be a non-negative safe integer.");
       const size = clampPageSize(input.limit, 100, 100);
       const attempts: SourceAttempt[] = [];
       const supported = context.capabilities.has("fightBuyPagination") || await context.capabilities.probe("fightBuyPagination", options.signal);
@@ -294,14 +364,27 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
         }, attempts);
       }
       if (!context.torii) throw new UnsupportedCapabilityError("fight buy enumeration");
+      const requestedEnd = offset + size;
+      const fetchSize = Math.min(requestedEnd, context.budget.maxRpcItems);
       const response = await context.torii.model<Record<string, unknown>>({
         model: "FightBuy",
         selection: FIGHT_BUY_SELECTION,
-        first: size,
+        first: Math.max(1, fetchSize),
         where: { fight_idEQ: fightId.toString() },
       }, options);
-      const items = response.data.edges.slice(offset).map((edge) => mapToriiFightBuy(edge.node));
-      return result(context, startedAt, "torii", { items, hasMore: response.data.pageInfo.hasNextPage }, response.attempts);
+      const items = response.data.edges.slice(offset, requestedEnd).map((edge) => mapToriiFightBuy(edge.node));
+      const nextOffset = offset + items.length;
+      const hasMore = nextOffset < response.data.totalCount;
+      const budgetCapped = requestedEnd > context.budget.maxRpcItems;
+      return result(context, startedAt, "torii", {
+        items,
+        ...(hasMore && items.length > 0 ? { cursor: nextOffset } : {}),
+        hasMore,
+      }, response.attempts, !budgetCapped, budgetCapped ? [{
+        code: "BUDGET_LIMIT",
+        message: `Fight buy pagination is capped at ${context.budget.maxRpcItems} Torii records.`,
+        source: "torii",
+      }] : []);
     },
     async viewerState(fightId, viewer, options = {}) {
       const startedAt = context.now();

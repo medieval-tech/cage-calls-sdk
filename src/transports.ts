@@ -1,6 +1,6 @@
 import { errorCode, withTimeout } from "./core.js";
 import { normalizeAddress, normalizeFelt, selectorFromName } from "./codecs.js";
-import { ConfigurationError, TransportError, UnsupportedCapabilityError, ValidationError } from "./errors.js";
+import { ConfigurationError, TransportError, ValidationError } from "./errors.js";
 import type { Address, DataSource, Felt, RequestOptions, SdkLogger, SourceAttempt } from "./types.js";
 
 export interface TransportResult<T> {
@@ -73,21 +73,6 @@ export interface ToriiTokenBalanceConnection {
 export interface ToriiTokenConnection {
   totalCount: number;
   edges: Array<{ node: { tokenMetadata?: ToriiTokenNode | null } }>;
-}
-
-export interface AlchemyNft {
-  tokenId: bigint;
-  contractAddress: Address;
-  name?: string;
-  description?: string;
-  image?: string;
-  animationUrl?: string;
-  attributes: Array<{ traitType?: string; value?: string | number | boolean | null }>;
-}
-
-export interface AlchemyNftTransport {
-  supportsContract(contract: Address, options?: RequestOptions): Promise<TransportResult<boolean>>;
-  ownedNfts(owner: Address, contract: Address, options?: RequestOptions): Promise<TransportResult<AlchemyNft[]>>;
 }
 
 export interface MetadataTransport {
@@ -360,115 +345,6 @@ export function createToriiGraphqlTransport(options: { url: string } & HttpOptio
         limit: request.limit ?? 100,
       }, requestOptions);
       return { ...result, data: result.data.tokens };
-    },
-  };
-}
-
-function alchemyBaseUrl(rpcUrl: string): string {
-  const rpc = new URL(validateHttpUrl(rpcUrl, "Alchemy RPC URL"));
-  if (!rpc.hostname.endsWith(".alchemy.com")) throw new UnsupportedCapabilityError("Alchemy NFT API");
-  const apiKey = rpc.pathname.split("/").filter(Boolean).at(-1);
-  if (!apiKey || apiKey.startsWith("v0_")) throw new ConfigurationError("Alchemy RPC URL does not contain an API key path segment.");
-  return `${rpc.origin}/nft/v3/${encodeURIComponent(apiKey)}`;
-}
-
-export function createAlchemyNftTransport(options: { rpcUrl: string; maxPages?: number } & HttpOptions): AlchemyNftTransport {
-  const baseUrl = alchemyBaseUrl(options.rpcUrl);
-  const fetchImpl = resolveFetch(options.fetch);
-  const timeoutMs = options.timeoutMs ?? 12_000;
-  const capabilityCache = new Map<Address, boolean>();
-  const maxPages = options.maxPages ?? 20;
-
-  const get = async <T>(path: string, parameters: Record<string, string | string[]>, operation: string, requestOptions: RequestOptions = {}) => {
-    const startedAt = Date.now();
-    const timeout = withTimeout(requestOptions.signal, timeoutMs);
-    try {
-      const url = new URL(`${baseUrl}/${path}`);
-      for (const [name, value] of Object.entries(parameters)) {
-        for (const item of Array.isArray(value) ? value : [value]) url.searchParams.append(name, item);
-      }
-      const response = await fetchImpl(url, { ...(options.headers ? { headers: options.headers } : {}), signal: timeout.signal });
-      if (!response.ok) throw new TransportError("alchemy-nft", `Alchemy NFT request failed with HTTP ${response.status}.`, { status: response.status });
-      return { data: await response.json() as T, attempts: [attempt("alchemy-nft", operation, startedAt, true)] };
-    } catch (cause) {
-      const transportError = cause instanceof TransportError
-        ? cause
-        : new TransportError("alchemy-nft", `Alchemy NFT request failed (${errorCode(cause)}).`, { cause });
-      options.logger?.warn?.("Cage Calls Alchemy NFT request failed.", { operation, errorCode: errorCode(transportError) });
-      Object.defineProperty(transportError, "attempts", {
-        value: [attempt("alchemy-nft", operation, startedAt, false, { errorCode: errorCode(transportError) })],
-      });
-      throw transportError;
-    } finally {
-      timeout.cleanup();
-    }
-  };
-
-  const supportsContract = async (contract: Address, requestOptions?: RequestOptions) => {
-    const address = normalizeAddress(contract);
-    const cached = capabilityCache.get(address);
-    if (cached !== undefined) return { data: cached, attempts: [] };
-    const result = await get<Record<string, unknown>>("getContractMetadata", { contractAddress: address }, "contract-probe", requestOptions);
-    const tokenType = String(result.data.tokenType ?? (result.data.contract as Record<string, unknown> | undefined)?.tokenType ?? "").toUpperCase();
-    const supported = tokenType === "ERC721" || tokenType === "ERC1155";
-    capabilityCache.set(address, supported);
-    return { ...result, data: supported };
-  };
-
-  return {
-    supportsContract,
-    async ownedNfts(owner, contract, requestOptions) {
-      const probe = await supportsContract(contract, requestOptions);
-      if (!probe.data) return { data: [], attempts: probe.attempts };
-      const items: AlchemyNft[] = [];
-      const attempts = [...probe.attempts];
-      let pageKey: string | undefined;
-      for (let page = 0; page < maxPages; page += 1) {
-        const parameters: Record<string, string | string[]> = {
-          owner: normalizeAddress(owner),
-          "contractAddresses[]": normalizeAddress(contract),
-          withMetadata: "true",
-          pageSize: "100",
-        };
-        if (pageKey) parameters.pageKey = pageKey;
-        const result = await get<{ ownedNfts?: Array<Record<string, unknown>>; pageKey?: string }>("getNFTsForOwner", parameters, "owned-nfts", requestOptions);
-        attempts.push(...result.attempts);
-        for (const value of result.data.ownedNfts ?? []) {
-          const contractValue = (value.contract as Record<string, unknown> | undefined)?.address;
-          if (typeof contractValue !== "string") continue;
-          let tokenId: bigint;
-          try { tokenId = BigInt(String(value.tokenId)); } catch { continue; }
-          const raw = value.raw as Record<string, unknown> | undefined;
-          const metadata = raw?.metadata as Record<string, unknown> | undefined;
-          const image = value.image as Record<string, unknown> | undefined;
-          const attributes = Array.isArray(metadata?.attributes)
-            ? metadata.attributes.map((attribute) => {
-                const record = attribute as Record<string, unknown>;
-                return {
-                  ...(typeof record.trait_type === "string" ? { traitType: record.trait_type } : {}),
-                  ...(record.value === undefined ? {} : { value: record.value as string | number | boolean | null }),
-                };
-              })
-            : [];
-          const item: AlchemyNft = {
-            tokenId,
-            contractAddress: normalizeAddress(contractValue),
-            attributes,
-          };
-          const name = typeof value.name === "string" ? value.name : typeof metadata?.name === "string" ? metadata.name : undefined;
-          const description = typeof value.description === "string" ? value.description : typeof metadata?.description === "string" ? metadata.description : undefined;
-          const imageUrl = typeof image?.cachedUrl === "string" ? image.cachedUrl : typeof image?.originalUrl === "string" ? image.originalUrl : typeof metadata?.image === "string" ? metadata.image : undefined;
-          const animationUrl = typeof metadata?.animation_url === "string" ? metadata.animation_url : undefined;
-          if (name) item.name = name;
-          if (description) item.description = description;
-          if (imageUrl) item.image = imageUrl;
-          if (animationUrl) item.animationUrl = animationUrl;
-          items.push(item);
-        }
-        pageKey = result.data.pageKey || undefined;
-        if (!pageKey) return { data: items, attempts };
-      }
-      return { data: items, attempts };
     },
   };
 }

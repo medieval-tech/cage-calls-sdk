@@ -10,8 +10,6 @@ import {
 import { AllSourcesFailedError, UnsupportedCapabilityError, ValidationError } from "./errors.js";
 import type { RepositoryContext } from "./repositories.js";
 import type {
-  AlchemyNft,
-  AlchemyNftTransport,
   MetadataTransport,
   ToriiTokenNode,
 } from "./transports.js";
@@ -30,7 +28,6 @@ import type {
 } from "./types.js";
 
 interface RelicContext extends RepositoryContext {
-  nft?: AlchemyNftTransport;
   metadata?: MetadataTransport;
 }
 
@@ -96,22 +93,6 @@ function mapToriiRelic(token: ToriiTokenNode, relicAddress: Address): Relic | un
   if (description) relic.description = description;
   if (image) relic.image = image;
   if (animationUrl) relic.animationUrl = animationUrl;
-  return relic;
-}
-
-function mapAlchemyRelic(value: AlchemyNft): Relic {
-  const relic: Relic = {
-    tokenId: value.tokenId,
-    attributes: value.attributes.map((attribute) => ({
-      ...(attribute.traitType ? { traitType: attribute.traitType } : {}),
-      ...(attribute.value === undefined ? {} : { value: attribute.value }),
-    })),
-    metadataSources: ["alchemy-nft"],
-  };
-  if (value.name) relic.name = value.name;
-  if (value.description) relic.description = value.description;
-  if (value.image) relic.image = value.image;
-  if (value.animationUrl) relic.animationUrl = value.animationUrl;
   return relic;
 }
 
@@ -445,34 +426,6 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
         } catch (error) {
           attempts.push(...transportAttemptsFromError(error));
           warnings.push({ code: "TORII_UNAVAILABLE", message: "Torii ownership lookup failed.", source: "torii" });
-        }
-      }
-
-      if (context.nft) {
-        try {
-          const response = await context.nft.ownedNfts(owner, context.network.contracts.RelicNFT, options);
-          attempts.push(...response.attempts);
-          if (BigInt(response.data.length) === balance) {
-            const toriiById = new Map(torii.map((relic) => [relic.tokenId.toString(), relic]));
-            let relics = response.data.map((value) => mergeRelic(toriiById.get(value.tokenId.toString()), mapAlchemyRelic(value)));
-            const incomplete = relics.filter((relic) => !metadataComplete(relic)).map((relic) => relic.tokenId);
-            if (incomplete.length > 0) {
-              const hydrated = await getMany(incomplete, options);
-              attempts.push(...hydrated.meta.attempts);
-              const byId = new Map(hydrated.data.map((relic) => [relic.tokenId.toString(), relic]));
-              relics = relics.map((relic) => mergeRelic(relic, byId.get(relic.tokenId.toString()) ?? relic));
-              warnings.push(...hydrated.meta.warnings);
-            }
-            return toResult(context, startedAt, "alchemy-nft", {
-              items: relics.map((relic) => ({ ...relic, owner, ownershipSource: "alchemy-nft" as const })),
-              hasMore: false,
-              provenance: { owner, onchainBalance: balance, ownershipSource: "alchemy-nft", verified: true },
-            }, attempts, relics.every(metadataComplete), warnings);
-          }
-          warnings.push({ code: "ALCHEMY_BALANCE_MISMATCH", message: `Alchemy returned ${response.data.length} of ${balance} owned relics.`, source: "alchemy-nft" });
-        } catch (error) {
-          attempts.push(...transportAttemptsFromError(error));
-          warnings.push({ code: "ALCHEMY_UNAVAILABLE", message: "Alchemy NFT ownership lookup failed or does not support the contract.", source: "alchemy-nft" });
         }
       }
 

@@ -109,12 +109,12 @@ world address, every contract address and class hash, Torii URL, Cartridge fallb
 address, deployment revision, and capability flags. The validated result is immutable, so local
 Katana deployments work without changing package globals or waiting for a release.
 
-## Optional NFT and IPFS adapters
+## Relic ownership and optional IPFS metadata
 
-`createAlchemyNftTransport` accepts a consumer-supplied authenticated RPC URL. It is only used
-after the contract capability probe succeeds and the Torii inventory is unavailable or disagrees
-with the onchain balance. `createIpfsMetadataTransport` tries configured gateways in order and
-hydrates only incomplete metadata. Full authenticated URLs are excluded from logs and errors.
+Relic ownership is verified against the onchain balance. Complete Torii results are accepted;
+otherwise the repository uses bounded owner-filtered contract views over Starknet RPC.
+`createIpfsMetadataTransport` tries configured gateways in order and hydrates only incomplete
+metadata. Full authenticated RPC URLs are excluded from logs and errors.
 
 ## Deployment artifacts
 

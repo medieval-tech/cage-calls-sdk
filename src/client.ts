@@ -20,13 +20,12 @@ import {
   type TokensRepository,
 } from "./repositories.js";
 import { createRelicsRepository, type RelicsRepository } from "./relics.js";
-import type { AlchemyNftTransport, MetadataTransport, RpcTransport, ToriiTransport } from "./transports.js";
+import type { MetadataTransport, RpcTransport, ToriiTransport } from "./transports.js";
 import type { CageCallsNetwork, NetworkName, RequestBudget, SdkLogger } from "./types.js";
 
 export interface CageCallsTransports {
   rpc: RpcTransport;
   torii?: ToriiTransport;
-  nft?: AlchemyNftTransport;
   metadata?: MetadataTransport;
 }
 
@@ -78,7 +77,6 @@ export function createCageCallsClient(options: CreateCageCallsClientOptions): Ca
     markets: createMarketsRepository(context),
     relics: createRelicsRepository({
       ...context,
-      ...(options.transports.nft ? { nft: options.transports.nft } : {}),
       ...(options.transports.metadata ? { metadata: options.transports.metadata } : {}),
     }),
     gacha: createGachaRepository(context, tokens),

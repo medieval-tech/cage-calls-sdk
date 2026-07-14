@@ -157,6 +157,8 @@ export interface CageCallsCallBuilders {
     redeem(fightId: bigint): CallPlan;
     setCollateral(token: Address): CallPlan;
     setWinnerAndSettle(fightId: bigint, marketId: bigint, winnerIndex: number): CallPlan;
+    grantAdmin(account: Address): CallPlan;
+    revokeAdmin(account: Address): CallPlan;
   };
   markets: {
     create(input: MarketCreateInput): CallPlan;
@@ -204,7 +206,7 @@ export interface CageCallsCallBuilders {
   };
 }
 
-function singleAdmin(network: CageCallsNetwork, contract: "FighterRegistry" | "Gacha" | "CageCallsOracle", entrypoint: "grant_admin" | "revoke_admin", account: Address): CallPlan {
+function singleAdmin(network: CageCallsNetwork, contract: "FightFactory" | "FighterRegistry" | "Gacha" | "CageCallsOracle", entrypoint: "grant_admin" | "revoke_admin", account: Address): CallPlan {
   return plan([call(network.contracts[contract], entrypoint, [normalizeAddress(account)])], [keys.admin()]);
 }
 
@@ -260,6 +262,8 @@ export function createCallBuilders(network: Readonly<CageCallsNetwork>): CageCal
           idCall("FightFactory", "settle_fight", fightId),
         ], [keys.fight(fightId), keys.market(marketId), keys.fights(), keys.markets(), keys.activity()]);
       },
+      grantAdmin(account) { return singleAdmin(network, "FightFactory", "grant_admin", account); },
+      revokeAdmin(account) { return singleAdmin(network, "FightFactory", "revoke_admin", account); },
     },
     markets: {
       create(input) { return plan([call(markets, "create_market", encodeMarketCreate(input, network))], [keys.markets(), keys.activity()]); },

@@ -48,35 +48,6 @@ export interface AdminRepository {
 }
 
 // @public (undocumented)
-export interface AlchemyNft {
-    // (undocumented)
-    animationUrl?: string;
-    // (undocumented)
-    attributes: Array<{
-        traitType?: string;
-        value?: string | number | boolean | null;
-    }>;
-    // (undocumented)
-    contractAddress: Address;
-    // (undocumented)
-    description?: string;
-    // (undocumented)
-    image?: string;
-    // (undocumented)
-    name?: string;
-    // (undocumented)
-    tokenId: bigint;
-}
-
-// @public (undocumented)
-export interface AlchemyNftTransport {
-    // (undocumented)
-    ownedNfts(owner: Address, contract: Address, options?: RequestOptions): Promise<TransportResult<AlchemyNft[]>>;
-    // (undocumented)
-    supportsContract(contract: Address, options?: RequestOptions): Promise<TransportResult<boolean>>;
-}
-
-// @public (undocumented)
 export class AllSourcesFailedError extends CageCallsSdkError {
     constructor(operation: string, attempts: SourceAttempt[]);
     // (undocumented)
@@ -155,6 +126,8 @@ export interface CageCallsCallBuilders {
         redeem(fightId: bigint): CallPlan;
         setCollateral(token: Address): CallPlan;
         setWinnerAndSettle(fightId: bigint, marketId: bigint, winnerIndex: number): CallPlan;
+        grantAdmin(account: Address): CallPlan;
+        revokeAdmin(account: Address): CallPlan;
     };
     // (undocumented)
     gacha: {
@@ -344,8 +317,6 @@ export interface CageCallsTransports {
     // (undocumented)
     metadata?: MetadataTransport;
     // (undocumented)
-    nft?: AlchemyNftTransport;
-    // (undocumented)
     rpc: RpcTransport;
     // (undocumented)
     torii?: ToriiTransport;
@@ -422,14 +393,6 @@ export function createActivityRepository(context: RepositoryContext): ActivityRe
 // @public (undocumented)
 export function createAdminRepository(context: RepositoryContext): AdminRepository;
 
-// Warning: (ae-forgotten-export) The symbol "HttpOptions" needs to be exported by the entry point index.d.ts
-//
-// @public (undocumented)
-export function createAlchemyNftTransport(options: {
-    rpcUrl: string;
-    maxPages?: number;
-} & HttpOptions): AlchemyNftTransport;
-
 // @public (undocumented)
 export function createCageCallsClient(options: CreateCageCallsClientOptions): CageCallsClient;
 
@@ -493,6 +456,8 @@ export function createGachaRepository(context: RepositoryContext, tokens: Tokens
 // @public (undocumented)
 export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport;
 
+// Warning: (ae-forgotten-export) The symbol "HttpOptions" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
 export function createIpfsMetadataTransport(options: {
     gateways: readonly string[];
@@ -546,7 +511,7 @@ export interface DataResult<T> {
 }
 
 // @public (undocumented)
-export type DataSource = "torii" | "starknet-rpc" | "alchemy-nft" | "ipfs" | "derived";
+export type DataSource = "torii" | "starknet-rpc" | "ipfs" | "derived";
 
 // @public (undocumented)
 export interface DataWarning {
@@ -1501,7 +1466,7 @@ export interface RelicOwnershipProvenance {
     // (undocumented)
     owner: Address;
     // (undocumented)
-    ownershipSource: "torii" | "alchemy-nft" | "starknet-rpc";
+    ownershipSource: "torii" | "starknet-rpc";
     // (undocumented)
     verified: boolean;
 }
@@ -1545,8 +1510,6 @@ export interface RepositoryContext {
 
 // @public (undocumented)
 export interface RequestBudget {
-    // (undocumented)
-    maxAlchemyPages: number;
     // (undocumented)
     maxConcurrency: number;
     // (undocumented)

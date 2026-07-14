@@ -3,13 +3,16 @@ import { describe, expect, it } from "vitest";
 import {
   createCallBuilders,
   createFightEventsRepository,
+  createFightsRepository,
   decodeActivity,
+  encodeByteArray,
+  encodeU256,
   MAINNET_PRESET,
   type FightFeedItem,
   type FightsRepository,
   type RepositoryContext,
 } from "../src/index.js";
-import { createMockRpcTransport } from "../src/testing.js";
+import { createMockRpcTransport, createMockToriiTransport } from "../src/testing.js";
 
 const fight = (seasonId: bigint, fightId: bigint): FightFeedItem => ({
   fightId,
@@ -67,6 +70,23 @@ describe("call plans and activity", () => {
     expect(response.invalidate).toContainEqual(["cage-calls", "owned-relics", "0x123"]);
   });
 
+  it("builds FightFactory admin calls against the FightFactory address", () => {
+    const grant = calls.fights.grantAdmin("0xabc");
+    const revoke = calls.fights.revokeAdmin("0xabc");
+
+    expect(grant.calls).toEqual([{
+      contractAddress: MAINNET_PRESET.contracts.FightFactory,
+      entrypoint: "grant_admin",
+      calldata: ["0xabc"],
+    }]);
+    expect(revoke.calls).toEqual([{
+      contractAddress: MAINNET_PRESET.contracts.FightFactory,
+      entrypoint: "revoke_admin",
+      calldata: ["0xabc"],
+    }]);
+    expect(grant.invalidate).toContainEqual(["cage-calls", "admin", "all"]);
+  });
+
   it("preserves unknown activity as a raw event", () => {
     const activity = decodeActivity("mainnet", {
       selector: "0x123",
@@ -91,11 +111,92 @@ describe("call plans and activity", () => {
       network: MAINNET_PRESET,
       rpc: createMockRpcTransport(),
       capabilities: { has: () => false, probe: async () => false, snapshot: () => MAINNET_PRESET.capabilities },
-      budget: { timeoutMs: 1, maxConcurrency: 1, maxRpcPages: 1, maxRpcItems: 1, maxToriiPages: 1, maxAlchemyPages: 1, pageSize: 1 },
+      budget: { timeoutMs: 1, maxConcurrency: 1, maxRpcPages: 1, maxRpcItems: 1, maxToriiPages: 1, pageSize: 1 },
       now: () => 15_000,
     } satisfies RepositoryContext;
     const response = await createFightEventsRepository(context, fights).list({ now: 15n });
     expect(response.data.items.map((event) => event.seasonId)).toEqual([1n, 2n]);
     expect(response.data.items).toHaveLength(2);
+  });
+
+  it("uses bounded singleton views when the aggregate fight feed is unavailable", async () => {
+    const encodedFight = [
+      ...encodeU256(1n), ...encodeU256(2n), ...encodeByteArray("Cage Night"), ...encodeU256(9n),
+      ...encodeU256(11n), ...encodeByteArray("Fighter A"), ...encodeByteArray("Lightweight"),
+      ...encodeU256(11n), ...encodeByteArray("A"), ...encodeU256(12n), ...encodeByteArray("Fighter B"),
+      ...encodeByteArray("Lightweight"), ...encodeU256(12n), ...encodeByteArray("B"),
+      "1700000000", "0", "0x0",
+    ];
+    const encodedMarket = [
+      ...encodeU256(9n), "0x123", "1700000000", ...encodeU256(7n), ...encodeU256(8n),
+      "0x456", "2", "0x789",
+    ];
+    const rpc = createMockRpcTransport({
+      calls: {
+        next_fight_id: encodeU256(2n),
+        fight: encodedFight,
+        get_market: encodedMarket,
+        get_vault_numerator: encodeU256(1n),
+        get_vault_denominator: encodeU256(2n),
+        get_payout_numerator: encodeU256(0n),
+        get_payout_denominator: encodeU256(0n),
+        fight_winner_index: ["255"],
+        winners_count: encodeU256(0n),
+        fight_pot_total: encodeU256(0n),
+        fight_pot_claimed: encodeU256(0n),
+      },
+    });
+    const context = {
+      network: MAINNET_PRESET,
+      rpc,
+      capabilities: { has: () => false, probe: async () => false, snapshot: () => MAINNET_PRESET.capabilities },
+      budget: { timeoutMs: 1, maxConcurrency: 2, maxRpcPages: 1, maxRpcItems: 20, maxToriiPages: 1, pageSize: 20 },
+      now: () => 15_000,
+    } satisfies RepositoryContext;
+
+    const response = await createFightsRepository(context).feed({ limit: 1 });
+
+    expect(response.data.items).toHaveLength(1);
+    expect(response.data.items[0]?.fightId).toBe(1n);
+    expect(response.meta.complete).toBe(false);
+    expect(response.meta.warnings).toContainEqual(expect.objectContaining({ code: "AGGREGATE_VIEW_FALLBACK" }));
+    expect(rpc.calls.some((call) => call.entrypoint === "get_fight_feed")).toBe(false);
+  });
+
+  it("paginates Torii fight buys with stable numeric cursors", async () => {
+    const buy = (buyer: string, boughtAt: string) => ({
+      fight_id: "1",
+      buyer,
+      market_id: "9",
+      choice_index: "0",
+      amount: "100",
+      bought_at: boughtAt,
+    });
+    const context = {
+      network: MAINNET_PRESET,
+      rpc: createMockRpcTransport(),
+      torii: createMockToriiTransport({
+        models: {
+          FightBuy: {
+            edges: [
+              { cursor: "a", node: buy("0x1", "10") },
+              { cursor: "b", node: buy("0x2", "20") },
+              { cursor: "c", node: buy("0x3", "30") },
+            ],
+            totalCount: 3,
+            pageInfo: { hasNextPage: false, endCursor: "c" },
+          },
+        },
+      }),
+      capabilities: { has: () => false, probe: async () => false, snapshot: () => MAINNET_PRESET.capabilities },
+      budget: { timeoutMs: 1, maxConcurrency: 2, maxRpcPages: 1, maxRpcItems: 20, maxToriiPages: 1, pageSize: 20 },
+      now: () => 15_000,
+    } satisfies RepositoryContext;
+
+    const response = await createFightsRepository(context).buys(1n, { offset: 1, limit: 1 });
+
+    expect(response.data.items.map((item) => item.buyer)).toEqual(["0x2"]);
+    expect(response.data.cursor).toBe(2);
+    expect(response.data.hasMore).toBe(true);
   });
 });

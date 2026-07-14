@@ -5,7 +5,6 @@ export type Felt = Hex;
 export type DataSource =
   | "torii"
   | "starknet-rpc"
-  | "alchemy-nft"
   | "ipfs"
   | "derived";
 
@@ -133,7 +132,6 @@ export interface RequestBudget {
   maxRpcPages: number;
   maxRpcItems: number;
   maxToriiPages: number;
-  maxAlchemyPages: number;
   pageSize: number;
 }
 
@@ -316,7 +314,7 @@ export interface Relic {
 export interface RelicOwnershipProvenance {
   owner: Address;
   onchainBalance: bigint;
-  ownershipSource: "torii" | "alchemy-nft" | "starknet-rpc";
+  ownershipSource: "torii" | "starknet-rpc";
   verified: boolean;
 }
 
