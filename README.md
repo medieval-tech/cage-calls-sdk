@@ -4,7 +4,7 @@ Framework-neutral TypeScript access to Cage Calls deployments. The core package 
 decoding, source fallbacks, validation, and typed call construction. It never owns a wallet,
 signs a transaction, or waits for a receipt.
 
-> Status: `0.1.0-next.3`. The API and deployment presets are canary-grade until the production
+> Status: `0.1.0-next.4`. The API and deployment presets are canary-grade until the production
 > client migration and network smoke tests are complete.
 
 ## Install

@@ -9,12 +9,12 @@ export const UPSTREAM_DEPLOYMENTS = {
       "sha256": "5a01f7129458756af4dde9981e87ac7d40ef6291441e293d246ce43450e05079"
     },
     "sepolia-dev": {
-      "commit": "fae46fcfff3d37d81cb70fd777c467c893e2df8a",
-      "sha256": "65027759b0e11174e6acbc83f96b1bb70c63d54e5e6417f81005720741afbf14"
+      "commit": "3796f13b5fb4a17f4d46be5a7ec1e5fe3818037b",
+      "sha256": "6ef84437a9b2a25f09525bccb10e2bcf811b4829f9c96f0cf2896620aca71894"
     },
     "sepolia-staging": {
-      "commit": "6832405b1a10b50b7e547bfed5d4633470c2522a",
-      "sha256": "9d551e77135375c8faac459d55a9d56a7bc7255ac0b246f832819e7fcdcfa6cd"
+      "commit": "3796f13b5fb4a17f4d46be5a7ec1e5fe3818037b",
+      "sha256": "822f075d8d8586fb873bfcd007b3ab454c66aa3a456b3f58f70947abc6ae3f40"
     }
   }
 } as const;
@@ -72,7 +72,7 @@ const presets = {
     "preset": "sepolia-dev",
     "chainId": "0x534e5f5345504f4c4941",
     "namespace": "pm",
-    "deploymentRevision": "fae46fcfff3d37d81cb70fd777c467c893e2df8a",
+    "deploymentRevision": "3796f13b5fb4a17f4d46be5a7ec1e5fe3818037b",
     "worldAddress": "0x1401498e3b1d0d155d28aac566d878536c9b32e8ff470a944e49e84bee2df62",
     "contracts": {
       "CALLS": "0x41e71cb49fb73a5f543fee74033616eaf867290b0da4613ec4758cca30c5ea",
@@ -89,13 +89,13 @@ const presets = {
     },
     "classHashes": {
       "CALLS": "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300",
-      "CageCallsOracle": "0x6b54f7b9bf5959362df92b163d08a0c9a921736ed0044b8a9ca446c4cd39790",
+      "CageCallsOracle": "0x16ca3bd248cc4eb5cd9869c876871091831da293b2e760bf73739e426b39b23",
       "ConditionalTokens": "0x6435347fd999d80f72fde6e95ca6c8c832ef65bb46630a9fc76ed7fc98e974b",
       "FightFactory": "0xe3d6d522657e99a197c426d8dd6814d8cc8ac3ffca9cb58f4ea368149e8ac",
-      "FighterRegistry": "0x1ae70de72ac445d345ffaa783db57da5b489b4fe2c97147b6141caa3dcfe6cf",
-      "Gacha": "0x3a2979e2775a2659ba95552a7921bec157a6cba8e1f5a46a19ae4ba1fce852e",
+      "FighterRegistry": "0x366b6ae2c4709582b47b8d7d21c7ec66eeae252fd03fad3b9e4598be6c60694",
+      "Gacha": "0x339c038535f51d5a5196714eb02fdcb666cfef66d9dce9c0704c35989735696",
       "Markets": "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12",
-      "RelicNFT": "0x107fadedf949739eb06f763c2d28b01c08c51f3dab586b55a14a545abac8088",
+      "RelicNFT": "0x1ac2ed97de7ea9dc443257190f555f07f0e4b55ed1e0b61efc702dbc84ed42a",
       "StrikeTickets": "0x6f5d99084de5e581da00408c0d44b9267a695184c346f69780d4ee2d8e9ebde",
       "VaultFees": "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e",
       "VaultPositions": "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730"
@@ -107,11 +107,11 @@ const presets = {
       "fightFeed": true,
       "fightBuyPagination": true,
       "relicFeed": true,
-      "relicBatch": false,
-      "relicOwnerPage": false,
-      "fighterBatch": false,
-      "gachaPoolAggregate": false,
-      "gachaAvailableTokenIds": false
+      "relicBatch": true,
+      "relicOwnerPage": true,
+      "fighterBatch": true,
+      "gachaPoolAggregate": true,
+      "gachaAvailableTokenIds": true
     }
   },
   "sepolia-staging": {
@@ -119,7 +119,7 @@ const presets = {
     "preset": "sepolia-staging",
     "chainId": "0x534e5f5345504f4c4941",
     "namespace": "pm",
-    "deploymentRevision": "6832405b1a10b50b7e547bfed5d4633470c2522a",
+    "deploymentRevision": "3796f13b5fb4a17f4d46be5a7ec1e5fe3818037b",
     "worldAddress": "0x65586aa40bececc31422af9008293dabe6ddedbe091632e9a481ca68657cda5",
     "contracts": {
       "CALLS": "0x34c6b2b62a58f9b0ca8229eb24194e3f7f6e544e4ff900507d5db015a5a9e82",
@@ -136,13 +136,13 @@ const presets = {
     },
     "classHashes": {
       "CALLS": "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300",
-      "CageCallsOracle": "0x6b54f7b9bf5959362df92b163d08a0c9a921736ed0044b8a9ca446c4cd39790",
+      "CageCallsOracle": "0x16ca3bd248cc4eb5cd9869c876871091831da293b2e760bf73739e426b39b23",
       "ConditionalTokens": "0x6435347fd999d80f72fde6e95ca6c8c832ef65bb46630a9fc76ed7fc98e974b",
-      "FightFactory": "0x76c944513ed942a34a398eb6d7715479ab1c63f2ae1f91093e2a9d3b8ea10ed",
-      "FighterRegistry": "0x1ae70de72ac445d345ffaa783db57da5b489b4fe2c97147b6141caa3dcfe6cf",
-      "Gacha": "0x3a2979e2775a2659ba95552a7921bec157a6cba8e1f5a46a19ae4ba1fce852e",
+      "FightFactory": "0xe3d6d522657e99a197c426d8dd6814d8cc8ac3ffca9cb58f4ea368149e8ac",
+      "FighterRegistry": "0x366b6ae2c4709582b47b8d7d21c7ec66eeae252fd03fad3b9e4598be6c60694",
+      "Gacha": "0x339c038535f51d5a5196714eb02fdcb666cfef66d9dce9c0704c35989735696",
       "Markets": "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12",
-      "RelicNFT": "0x109910e72e75e100f5354a5061733397b551934b0a310e802bd2fbbdc9417e3",
+      "RelicNFT": "0x1ac2ed97de7ea9dc443257190f555f07f0e4b55ed1e0b61efc702dbc84ed42a",
       "StrikeTickets": "0x6f5d99084de5e581da00408c0d44b9267a695184c346f69780d4ee2d8e9ebde",
       "VaultFees": "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e",
       "VaultPositions": "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730"
@@ -151,14 +151,14 @@ const presets = {
     "cartridgeRpcUrl": "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_9",
     "vrfAddress": "0x051fea4450da9d6aee758bdeba88b2f665bcbf549d2c61421aa724e9ac0ced8f",
     "capabilities": {
-      "fightFeed": false,
-      "fightBuyPagination": false,
-      "relicFeed": false,
-      "relicBatch": false,
-      "relicOwnerPage": false,
-      "fighterBatch": false,
-      "gachaPoolAggregate": false,
-      "gachaAvailableTokenIds": false
+      "fightFeed": true,
+      "fightBuyPagination": true,
+      "relicFeed": true,
+      "relicBatch": true,
+      "relicOwnerPage": true,
+      "fighterBatch": true,
+      "gachaPoolAggregate": true,
+      "gachaAvailableTokenIds": true
     }
   },
 } satisfies Record<NetworkName, CageCallsNetwork>;
