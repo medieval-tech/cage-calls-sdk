@@ -4,6 +4,7 @@ import {
   createCageCallsClient,
   createFallbackRpcTransport,
   createHttpRpcTransport,
+  createToriiGraphqlTransport,
   TransportError,
   type RpcTransport,
 } from "../src/index.js";
@@ -80,5 +81,55 @@ describe("RPC transports", () => {
     await client.tokens.callsBalance("0x1");
     expect(logger.warn).toHaveBeenCalledOnce();
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("http");
+  });
+
+  it("detects legacy Torii offset pagination and returns stable cursors", async () => {
+    const requests: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
+      requests.push(request);
+      if (request.query.includes("first:$first")) {
+        return json({ errors: [{ message: "Unknown argument first" }] });
+      }
+      const offset = Number(request.variables.offset ?? 0);
+      return json({
+        data: {
+          pmFightModels: {
+            totalCount: 3,
+            pageInfo: { hasNextPage: true, endCursor: null },
+            edges: [{ cursor: `legacy-${offset}`, node: { fight_id: String(offset + 1) } }],
+          },
+        },
+      });
+    });
+    const torii = createToriiGraphqlTransport({ url: "https://torii.example", fetch });
+
+    const first = await torii.model<{ fight_id: string }>({
+      model: "Fight",
+      selection: ["fight_id"],
+      first: 1,
+    });
+    const second = await torii.model<{ fight_id: string }>({
+      model: "Fight",
+      selection: ["fight_id"],
+      first: 1,
+      after: first.data.pageInfo.endCursor!,
+    });
+
+    expect(first.data.pageInfo).toEqual({ hasNextPage: true, endCursor: "offset:1" });
+    expect(first.attempts).toHaveLength(2);
+    expect(first.attempts[1]?.fallback).toBe(true);
+    expect(second.data.edges[0]?.node.fight_id).toBe("2");
+    expect(requests).toHaveLength(3);
+    expect(requests[2]?.variables.offset).toBe(1);
+  });
+
+  it("does not retry a failed HTTP request as a pagination dialect change", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(null, { status: 503 }));
+    const torii = createToriiGraphqlTransport({ url: "https://torii.example", fetch });
+
+    await expect(torii.model({ model: "Fight", selection: ["fight_id"], first: 1 }))
+      .rejects.toMatchObject({ code: "TRANSPORT_ERROR", status: 503 });
+    expect(fetch).toHaveBeenCalledOnce();
   });
 });

@@ -4,7 +4,7 @@ Framework-neutral TypeScript access to Cage Calls deployments. The core package 
 decoding, source fallbacks, validation, and typed call construction. It never owns a wallet,
 signs a transaction, or waits for a receipt.
 
-> Status: `0.1.0-next.0`. The API and deployment presets are canary-grade until the production
+> Status: `0.1.0-next.1`. The API and deployment presets are canary-grade until the production
 > client migration and network smoke tests are complete.
 
 ## Install
@@ -115,6 +115,9 @@ Relic ownership is verified against the onchain balance. Complete Torii results 
 otherwise the repository uses bounded owner-filtered contract views over Starknet RPC.
 `createIpfsMetadataTransport` tries configured gateways in order and hydrates only incomplete
 metadata. Full authenticated RPC URLs are excluded from logs and errors.
+
+Alchemy endpoints are supported as ordinary Starknet JSON-RPC providers. The SDK does not use
+Alchemy's dedicated NFT API because it does not support the Cage Calls Starknet mainnet flow.
 
 ## Deployment artifacts
 

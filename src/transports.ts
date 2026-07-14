@@ -254,6 +254,14 @@ export function createToriiGraphqlTransport(options: { url: string } & HttpOptio
   const endpoint = base.endsWith("/graphql") ? base : `${base}/graphql`;
   const fetchImpl = resolveFetch(options.fetch);
   const timeoutMs = options.timeoutMs ?? 12_000;
+  let modelPaginationDialect: "relay" | "offset" | undefined;
+  let eventPaginationDialect: "relay" | "offset" | undefined;
+
+  const canRetryWithOffset = (error: unknown, signal?: AbortSignal) =>
+    !signal?.aborted
+    && error instanceof TransportError
+    && error.status === undefined
+    && error.cause === undefined;
 
   const query = async <T>(document: string, variables: Record<string, unknown> = {}, requestOptions: RequestOptions = {}) => {
     const startedAt = Date.now();
@@ -296,37 +304,104 @@ export function createToriiGraphqlTransport(options: { url: string } & HttpOptio
       const field = `pm${request.model}Models`;
       const whereType = `pm_${request.model}WhereInput`;
       const orderType = `pm_${request.model}Order`;
-      const declarations = ["$first:Int"];
-      const argumentsList = ["first:$first"];
-      const variables: Record<string, unknown> = { first: request.first ?? 100 };
-      if (request.after) {
-        declarations.push("$after:Cursor");
-        argumentsList.push("after:$after");
-        variables.after = request.after;
+      const optionalArguments = (declarations: string[], argumentsList: string[], variables: Record<string, unknown>) => {
+        if (request.where) {
+          declarations.push(`$where:${whereType}`);
+          argumentsList.push("where:$where");
+          variables.where = request.where;
+        }
+        if (request.order) {
+          declarations.push(`$order:${orderType}`);
+          argumentsList.push("order:$order");
+          variables.order = request.order;
+        }
+      };
+      const read = async (dialect: "relay" | "offset") => {
+        const declarations = dialect === "relay" ? ["$first:Int"] : ["$offset:Int", "$limit:Int"];
+        const argumentsList = dialect === "relay" ? ["first:$first"] : ["offset:$offset", "limit:$limit"];
+        const pageSize = request.first ?? 100;
+        const variables: Record<string, unknown> = dialect === "relay"
+          ? { first: pageSize }
+          : { offset: request.after?.startsWith("offset:") ? Number(request.after.slice(7)) : 0, limit: pageSize };
+        if (dialect === "relay" && request.after) {
+          declarations.push("$after:Cursor");
+          argumentsList.push("after:$after");
+          variables.after = request.after;
+        }
+        optionalArguments(declarations, argumentsList, variables);
+        const document = `query CageCallsModel(${declarations.join(",")}){${field}(${argumentsList.join(",")}){totalCount pageInfo{hasNextPage endCursor} edges{cursor node{${request.selection.join(" ")}}}}}`;
+        const response = await query<Record<string, ToriiConnection<T>>>(document, variables, requestOptions);
+        const connection = response.data[field];
+        if (!connection) throw new TransportError("torii", `Torii response omitted model ${request.model}.`);
+        if (dialect === "offset") {
+          const offset = Number(variables.offset);
+          const nextOffset = offset + connection.edges.length;
+          connection.pageInfo = {
+            hasNextPage: nextOffset < connection.totalCount,
+            ...(nextOffset < connection.totalCount ? { endCursor: `offset:${nextOffset}` } : {}),
+          };
+        }
+        return { ...response, data: connection };
+      };
+
+      if (modelPaginationDialect) return read(modelPaginationDialect);
+      try {
+        const response = await read("relay");
+        modelPaginationDialect = "relay";
+        return response;
+      } catch (relayError) {
+        if (!canRetryWithOffset(relayError, requestOptions?.signal)) throw relayError;
+        const response = await read("offset");
+        modelPaginationDialect = "offset";
+        return {
+          ...response,
+          attempts: [
+            ...attemptsFromError(relayError),
+            ...response.attempts.map((value) => ({ ...value, fallback: true })),
+          ],
+        };
       }
-      if (request.where) {
-        declarations.push(`$where:${whereType}`);
-        argumentsList.push("where:$where");
-        variables.where = request.where;
-      }
-      if (request.order) {
-        declarations.push(`$order:${orderType}`);
-        argumentsList.push("order:$order");
-        variables.order = request.order;
-      }
-      const document = `query CageCallsModel(${declarations.join(",")}){${field}(${argumentsList.join(",")}){totalCount pageInfo{hasNextPage endCursor} edges{cursor node{${request.selection.join(" ")}}}}}`;
-      const result = await query<Record<string, ToriiConnection<T>>>(document, variables, requestOptions);
-      const data = result.data[field];
-      if (!data) throw new TransportError("torii", `Torii response omitted model ${request.model}.`);
-      return { ...result, data };
     },
     async events(request = {}, requestOptions) {
-      const document = "query CageCallsEvents($first:Int,$after:Cursor,$keys:[String!]){events(first:$first,after:$after,keys:$keys){totalCount pageInfo{hasNextPage endCursor} edges{cursor node{id keys data executedAt createdAt transactionHash}}}}";
-      const variables: Record<string, unknown> = { first: request.first ?? 100 };
-      if (request.after) variables.after = request.after;
-      if (request.keys) variables.keys = request.keys;
-      const result = await query<{ events: ToriiConnection<ToriiRawEvent> }>(document, variables, requestOptions);
-      return { ...result, data: result.data.events };
+      const read = async (dialect: "relay" | "offset") => {
+        const document = dialect === "relay"
+          ? "query CageCallsEvents($first:Int,$after:Cursor,$keys:[String!]){events(first:$first,after:$after,keys:$keys){totalCount pageInfo{hasNextPage endCursor} edges{cursor node{id keys data executedAt createdAt transactionHash}}}}"
+          : "query CageCallsEvents($offset:Int,$limit:Int,$keys:[String!]){events(offset:$offset,limit:$limit,keys:$keys){totalCount pageInfo{hasNextPage endCursor} edges{cursor node{id keys data executedAt createdAt transactionHash}}}}";
+        const pageSize = request.first ?? 100;
+        const variables: Record<string, unknown> = dialect === "relay"
+          ? { first: pageSize }
+          : { offset: request.after?.startsWith("offset:") ? Number(request.after.slice(7)) : 0, limit: pageSize };
+        if (dialect === "relay" && request.after) variables.after = request.after;
+        if (request.keys) variables.keys = request.keys;
+        const response = await query<{ events: ToriiConnection<ToriiRawEvent> }>(document, variables, requestOptions);
+        const connection = response.data.events;
+        if (dialect === "offset") {
+          const offset = Number(variables.offset);
+          const nextOffset = offset + connection.edges.length;
+          connection.pageInfo = {
+            hasNextPage: nextOffset < connection.totalCount,
+            ...(nextOffset < connection.totalCount ? { endCursor: `offset:${nextOffset}` } : {}),
+          };
+        }
+        return { ...response, data: connection };
+      };
+      if (eventPaginationDialect) return read(eventPaginationDialect);
+      try {
+        const response = await read("relay");
+        eventPaginationDialect = "relay";
+        return response;
+      } catch (relayError) {
+        if (!canRetryWithOffset(relayError, requestOptions?.signal)) throw relayError;
+        const response = await read("offset");
+        eventPaginationDialect = "offset";
+        return {
+          ...response,
+          attempts: [
+            ...attemptsFromError(relayError),
+            ...response.attempts.map((value) => ({ ...value, fallback: true })),
+          ],
+        };
+      }
     },
     async tokenBalances(account, request = {}, requestOptions) {
       const document = "query CageCallsBalances($account:String!,$offset:Int,$limit:Int){tokenBalances(accountAddress:$account,offset:$offset,limit:$limit){totalCount edges{node{tokenMetadata{__typename ... on ERC721__Token{tokenId contractAddress metadata metadataName metadataDescription metadataAttributes imagePath} ... on ERC1155__Token{tokenId contractAddress metadata metadataName metadataDescription metadataAttributes imagePath}}}}}}";
