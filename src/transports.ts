@@ -85,6 +85,7 @@ interface HttpOptions {
   headers?: Readonly<Record<string, string>>;
   logger?: SdkLogger;
   timeoutMs?: number;
+  maxConcurrency?: number;
 }
 
 interface HttpRpcOptions extends HttpOptions {
@@ -99,6 +100,75 @@ function resolveFetch(value?: typeof fetch): typeof fetch {
 
 function attempt(source: DataSource, operation: string, startedAt: number, ok: boolean, extra: Partial<SourceAttempt> = {}): SourceAttempt {
   return { source, operation, durationMs: Math.max(0, Date.now() - startedAt), ok, ...extra };
+}
+
+function abortError(): Error {
+  const error = new Error("Request aborted.");
+  error.name = "AbortError";
+  return error;
+}
+
+function createConcurrencyGate(limit: number): (signal?: AbortSignal) => Promise<() => void> {
+  let active = 0;
+  const queue: Array<{
+    signal?: AbortSignal;
+    resolve: (release: () => void) => void;
+    reject: (error: unknown) => void;
+    onAbort?: () => void;
+  }> = [];
+
+  const drain = () => {
+    while (active < limit && queue.length > 0) {
+      const waiter = queue.shift();
+      if (!waiter) break;
+      if (waiter.onAbort) waiter.signal?.removeEventListener("abort", waiter.onAbort);
+      if (waiter.signal?.aborted) {
+        waiter.reject(abortError());
+        continue;
+      }
+      active += 1;
+      let released = false;
+      waiter.resolve(() => {
+        if (released) return;
+        released = true;
+        active -= 1;
+        drain();
+      });
+    }
+  };
+
+  return (signal?: AbortSignal) => {
+    if (signal?.aborted) return Promise.reject(abortError());
+    return new Promise<() => void>((resolve, reject) => {
+      const waiter: (typeof queue)[number] = { resolve, reject, ...(signal ? { signal } : {}) };
+      if (signal) {
+        waiter.onAbort = () => {
+          const index = queue.indexOf(waiter);
+          if (index >= 0) queue.splice(index, 1);
+          reject(abortError());
+        };
+        signal.addEventListener("abort", waiter.onAbort, { once: true });
+      }
+      queue.push(waiter);
+      drain();
+    });
+  };
+}
+
+function transportDiagnosticCode(error: unknown): string {
+  if (error instanceof TransportError && error.transportCode) return error.transportCode;
+  if (error instanceof TransportError && error.rpcCode !== undefined) return `RPC_${error.rpcCode}`;
+  if (error instanceof TransportError && error.status !== undefined) return `HTTP_${error.status}`;
+  return errorCode(error);
+}
+
+function transportLogContext(method: string, error: TransportError): Readonly<Record<string, unknown>> {
+  return {
+    method,
+    errorCode: transportDiagnosticCode(error),
+    ...(error.status === undefined ? {} : { status: error.status }),
+    ...(error.rpcCode === undefined ? {} : { rpcCode: error.rpcCode }),
+  };
 }
 
 function validateHttpUrl(value: string, label: string): string {
@@ -119,6 +189,11 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
   const endpoint = validateHttpUrl(options.url, "RPC URL");
   const fetchImpl = resolveFetch(options.fetch);
   const timeoutMs = options.timeoutMs ?? 12_000;
+  const maxConcurrency = options.maxConcurrency ?? 8;
+  if (!Number.isSafeInteger(maxConcurrency) || maxConcurrency <= 0) {
+    throw new ConfigurationError("RPC maxConcurrency must be a positive safe integer.");
+  }
+  const acquire = createConcurrencyGate(maxConcurrency);
   let id = 0;
 
   const request = async <T>(
@@ -127,8 +202,12 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
     requestOptions: RequestOptions = {},
   ): Promise<TransportResult<T>> => {
     const startedAt = Date.now();
-    const timeout = withTimeout(requestOptions.signal, timeoutMs);
+    let release: (() => void) | undefined;
+    let timeout: ReturnType<typeof withTimeout> | undefined;
     try {
+      release = await acquire(requestOptions.signal);
+      timeout = withTimeout(requestOptions.signal, timeoutMs);
+      if (timeout.signal.aborted) throw abortError();
       const response = await fetchImpl(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json", ...options.headers },
@@ -136,29 +215,43 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
         signal: timeout.signal,
       });
       if (!response.ok) {
-        throw new TransportError("starknet-rpc", `RPC request failed with HTTP ${response.status}.`, { status: response.status });
+        throw new TransportError("starknet-rpc", `RPC request failed with HTTP ${response.status}.`, {
+          status: response.status,
+          transportCode: `HTTP_${response.status}`,
+        });
       }
       const payload = await response.json() as { result?: T; error?: { code?: number; message?: string } };
       if (payload.error) {
         const code = payload.error.code === undefined ? "RPC_ERROR" : `RPC_${payload.error.code}`;
-        throw new TransportError("starknet-rpc", `RPC request failed (${code}).`);
+        throw new TransportError("starknet-rpc", `RPC request failed (${code}).`, {
+          ...(payload.error.code === undefined ? {} : { rpcCode: payload.error.code }),
+          transportCode: code,
+        });
       }
       if (!("result" in payload)) throw new TransportError("starknet-rpc", "RPC response did not include a result.");
       return { data: payload.result as T, attempts: [attempt("starknet-rpc", method, startedAt, true)] };
     } catch (cause) {
+      const transportCode = requestOptions.signal?.aborted
+        ? "ABORTED"
+        : timeout?.signal.aborted
+          ? "TIMEOUT"
+          : errorCode(cause);
       const transportError = cause instanceof TransportError
         ? cause
-        : new TransportError("starknet-rpc", `RPC request failed (${errorCode(cause)}).`, { cause });
-      options.logger?.warn?.("Cage Calls RPC request failed.", { method, errorCode: errorCode(transportError) });
+        : new TransportError("starknet-rpc", `RPC request failed (${transportCode}).`, { cause, transportCode });
+      if (transportDiagnosticCode(transportError) !== "ABORTED") {
+        options.logger?.warn?.("Cage Calls RPC request failed.", transportLogContext(method, transportError));
+      }
       Object.defineProperty(transportError, "attempts", {
         value: [attempt("starknet-rpc", method, startedAt, false, {
           ...(transportError.status === undefined ? {} : { status: transportError.status }),
-          errorCode: errorCode(transportError),
+          errorCode: transportDiagnosticCode(transportError),
         })],
       });
       throw transportError;
     } finally {
-      timeout.cleanup();
+      timeout?.cleanup();
+      release?.();
     }
   };
 
@@ -193,20 +286,25 @@ export function createFallbackRpcTransport(options: {
   headers?: Readonly<Record<string, string>>;
   logger?: SdkLogger;
   timeoutMs?: number;
+  maxConcurrency?: number;
 }): RpcTransport {
+  const fallbackUrl = validateHttpUrl(options.fallbackUrl, "Fallback RPC URL");
+  const primaryUrl = options.primaryUrl ? validateHttpUrl(options.primaryUrl, "Primary RPC URL") : undefined;
   const fallback = createHttpRpcTransport({
-    url: options.fallbackUrl,
+    url: fallbackUrl,
     ...(options.fetch ? { fetch: options.fetch } : {}),
     ...(options.headers ? { headers: options.headers } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.maxConcurrency ? { maxConcurrency: options.maxConcurrency } : {}),
   });
-  const primary = options.primaryUrl
+  const primary = primaryUrl && primaryUrl !== fallbackUrl
     ? createHttpRpcTransport({
-        url: options.primaryUrl,
+        url: primaryUrl,
         ...(options.fetch ? { fetch: options.fetch } : {}),
         ...(options.headers ? { headers: options.headers } : {}),
         ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options.maxConcurrency ? { maxConcurrency: options.maxConcurrency } : {}),
       })
     : fallback;
 
@@ -215,7 +313,13 @@ export function createFallbackRpcTransport(options: {
       return await primary.request<T>(method, params, requestOptions);
     } catch (primaryError) {
       if (primary === fallback) throw primaryError;
-      options.logger?.warn?.("Cage Calls RPC fallback selected.", { method, errorCode: errorCode(primaryError) });
+      if (requestOptions?.signal?.aborted || transportDiagnosticCode(primaryError) === "ABORTED") throw primaryError;
+      options.logger?.warn?.("Cage Calls RPC fallback selected.", {
+        method,
+        errorCode: transportDiagnosticCode(primaryError),
+        ...(primaryError instanceof TransportError && primaryError.status !== undefined ? { status: primaryError.status } : {}),
+        ...(primaryError instanceof TransportError && primaryError.rpcCode !== undefined ? { rpcCode: primaryError.rpcCode } : {}),
+      });
       try {
         const result = await fallback.request<T>(method, params, requestOptions);
         const fallbackAttempts = result.attempts.map((value) => ({ ...value, fallback: true }));
