@@ -197,6 +197,23 @@ function transportLogContext(method: string, error: TransportError): Readonly<Re
   };
 }
 
+function rpcCallLogContext(
+  input: RpcCall,
+  startedAt: number,
+  attempts: readonly SourceAttempt[],
+  error?: unknown,
+): Readonly<Record<string, unknown>> {
+  return {
+    contractAddress: normalizeAddress(input.contractAddress),
+    entrypoint: input.entrypoint,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    attemptCount: attempts.length,
+    retryCount: attempts.filter((value) => !value.ok).length,
+    fallback: attempts.some((value) => value.fallback),
+    ...(error === undefined ? {} : { errorCode: transportDiagnosticCode(error) }),
+  };
+}
+
 function validateHttpUrl(value: string, label: string): string {
   try {
     const url = new URL(value);
@@ -312,12 +329,20 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
   return {
     request,
     async call(input, requestOptions) {
+      const startedAt = Date.now();
       const call = {
         contract_address: normalizeAddress(input.contractAddress),
         entry_point_selector: selectorFromName(input.entrypoint),
         calldata: (input.calldata ?? []).map((value) => normalizeFelt(value)),
       };
-      return request<string[]>("starknet_call", [call, input.blockId ?? "latest"], requestOptions);
+      try {
+        const response = await request<string[]>("starknet_call", [call, input.blockId ?? "latest"], requestOptions);
+        options.logger?.debug?.("Cage Calls RPC call completed.", rpcCallLogContext(input, startedAt, response.attempts));
+        return response;
+      } catch (error) {
+        options.logger?.debug?.("Cage Calls RPC call failed.", rpcCallLogContext(input, startedAt, attemptsFromError(error), error));
+        throw error;
+      }
     },
     async getClassHashAt(address, requestOptions) {
       const result = await request<string>("starknet_getClassHashAt", ["latest", normalizeAddress(address)], requestOptions);
@@ -396,12 +421,20 @@ export function createFallbackRpcTransport(options: {
   return {
     request,
     async call(input, requestOptions) {
+      const startedAt = Date.now();
       const call = {
         contract_address: normalizeAddress(input.contractAddress),
         entry_point_selector: selectorFromName(input.entrypoint),
         calldata: (input.calldata ?? []).map((value) => normalizeFelt(value)),
       };
-      return request<string[]>("starknet_call", [call, input.blockId ?? "latest"], requestOptions);
+      try {
+        const response = await request<string[]>("starknet_call", [call, input.blockId ?? "latest"], requestOptions);
+        options.logger?.debug?.("Cage Calls RPC call completed.", rpcCallLogContext(input, startedAt, response.attempts));
+        return response;
+      } catch (error) {
+        options.logger?.debug?.("Cage Calls RPC call failed.", rpcCallLogContext(input, startedAt, attemptsFromError(error), error));
+        throw error;
+      }
     },
     async getClassHashAt(address, requestOptions) {
       const result = await request<string>("starknet_getClassHashAt", ["latest", normalizeAddress(address)], requestOptions);
@@ -462,6 +495,7 @@ export function createToriiGraphqlTransport(options: { url: string } & HttpOptio
   return {
     query,
     async model<T>(request: ToriiModelRequest, requestOptions?: RequestOptions) {
+      const startedAt = Date.now();
       if (!MODEL_NAME.test(request.model) || request.selection.some((field: string) => !FIELD_NAME.test(field))) {
         throw new ValidationError("Torii model or selection contains an invalid GraphQL identifier.");
       }
@@ -508,22 +542,36 @@ export function createToriiGraphqlTransport(options: { url: string } & HttpOptio
         return { ...response, data: connection };
       };
 
-      if (modelPaginationDialect) return read(modelPaginationDialect);
+      const trace = (response: TransportResult<ToriiConnection<T>>, dialect: "relay" | "offset") => {
+        options.logger?.debug?.("Cage Calls Torii model query completed.", {
+          model: request.model,
+          itemCount: response.data.edges.length,
+          totalCount: response.data.totalCount,
+          hasNextPage: response.data.pageInfo.hasNextPage,
+          paginationDialect: dialect,
+          attemptCount: response.attempts.length,
+          fallback: response.attempts.some((value) => value.fallback),
+          durationMs: Math.max(0, Date.now() - startedAt),
+        });
+        return response;
+      };
+
+      if (modelPaginationDialect) return trace(await read(modelPaginationDialect), modelPaginationDialect);
       try {
         const response = await read("relay");
         modelPaginationDialect = "relay";
-        return response;
+        return trace(response, "relay");
       } catch (relayError) {
         if (!canRetryWithOffset(relayError, requestOptions?.signal)) throw relayError;
         const response = await read("offset");
         modelPaginationDialect = "offset";
-        return {
+        return trace({
           ...response,
           attempts: [
             ...attemptsFromError(relayError),
             ...response.attempts.map((value) => ({ ...value, fallback: true })),
           ],
-        };
+        }, "offset");
       }
     },
     async events(request = {}, requestOptions) {

@@ -22,7 +22,7 @@ describe("RPC transports", () => {
         ? json({ error: "down" }, 503)
         : json({ jsonrpc: "2.0", id: 1, result: ["0", "0"] });
     });
-    const logger = { warn: vi.fn() };
+    const logger = { debug: vi.fn(), warn: vi.fn() };
     const rpc = createFallbackRpcTransport({
       primaryUrl: "https://primary.example/rpc/secret-primary",
       fallbackUrl: "https://fallback.example/rpc/secret-fallback",
@@ -35,8 +35,18 @@ describe("RPC transports", () => {
     expect(response.data).toEqual(["0", "0"]);
     expect(response.attempts).toHaveLength(2);
     expect(response.attempts[1]?.fallback).toBe(true);
+    expect(logger.debug).toHaveBeenCalledWith("Cage Calls RPC call completed.", expect.objectContaining({
+      contractAddress: "0x1",
+      entrypoint: "balance_of",
+      attemptCount: 2,
+      retryCount: 1,
+      fallback: true,
+    }));
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("secret-primary");
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("secret-fallback");
+    expect(JSON.stringify(logger.debug.mock.calls)).not.toContain("secret-primary");
+    expect(JSON.stringify(logger.debug.mock.calls)).not.toContain("secret-fallback");
+    expect(JSON.stringify(logger.debug.mock.calls)).not.toContain("0x2");
   });
 
   it("does not expose authenticated endpoints in transport errors", async () => {
@@ -91,6 +101,27 @@ describe("RPC transports", () => {
       [false, "RPC_429"],
       [true, undefined],
     ]);
+  });
+
+  it("traces standalone RPC entrypoints without logging calldata", async () => {
+    const logger = { debug: vi.fn() };
+    const rpc = createHttpRpcTransport({
+      url: "https://rpc.example/secret-key",
+      fetch: vi.fn(async () => json({ jsonrpc: "2.0", id: 1, result: ["1"] })),
+      logger,
+    });
+
+    await rpc.call({ contractAddress: "0x123", entrypoint: "get_market", calldata: ["0xdeadbeef"] });
+
+    expect(logger.debug).toHaveBeenCalledWith("Cage Calls RPC call completed.", expect.objectContaining({
+      contractAddress: "0x123",
+      entrypoint: "get_market",
+      attemptCount: 1,
+      retryCount: 0,
+      fallback: false,
+    }));
+    expect(JSON.stringify(logger.debug.mock.calls)).not.toContain("secret-key");
+    expect(JSON.stringify(logger.debug.mock.calls)).not.toContain("deadbeef");
   });
 
   it("does not fall back or warn when the caller aborts the primary request", async () => {
@@ -226,6 +257,43 @@ describe("RPC transports", () => {
     expect(second.data.edges[0]?.node.fight_id).toBe("2");
     expect(requests).toHaveLength(3);
     expect(requests[2]?.variables.offset).toBe(1);
+  });
+
+  it("traces Torii model pages without logging filters or endpoints", async () => {
+    const logger = { debug: vi.fn() };
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => json({
+      data: {
+        pmMarketModels: {
+          totalCount: 1,
+          pageInfo: { hasNextPage: false, endCursor: null },
+          edges: [{ cursor: "market-1", node: { market_id: "1" } }],
+        },
+      },
+    }));
+    const torii = createToriiGraphqlTransport({
+      url: "https://torii.example/secret-path",
+      fetch,
+      logger,
+    });
+
+    await torii.model({
+      model: "Market",
+      selection: ["market_id"],
+      first: 20,
+      where: { creator: "0xsecret-filter" },
+    });
+
+    expect(logger.debug).toHaveBeenCalledWith("Cage Calls Torii model query completed.", expect.objectContaining({
+      model: "Market",
+      itemCount: 1,
+      totalCount: 1,
+      hasNextPage: false,
+      paginationDialect: "relay",
+      attemptCount: 1,
+      fallback: false,
+    }));
+    expect(JSON.stringify(logger.debug.mock.calls)).not.toContain("secret-path");
+    expect(JSON.stringify(logger.debug.mock.calls)).not.toContain("secret-filter");
   });
 
   it("does not retry a failed HTTP request as a pagination dialect change", async () => {
