@@ -269,6 +269,61 @@ describe("relic ownership source policy", () => {
     expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_BALANCE_MISMATCH");
   });
 
+  it("continues owner RPC pagination across empty windows until the verified balance is found", async () => {
+    const rpc = createMockRpcTransport({
+      calls: {
+        balance_of: ["1", "0"],
+        get_owned_relics: (request) => {
+          const cursor = BigInt(request.calldata?.[1] ?? "0");
+          if (cursor === 0n) return encodeOwnedPage([], 800n);
+          if (cursor === 800n) return encodeOwnedPage([], 600n);
+          return encodeOwnedPage([{ tokenId: 1n, owner }], 400n);
+        },
+      },
+    });
+    const upgraded = {
+      ...SEPOLIA_DEV_PRESET,
+      capabilities: { ...SEPOLIA_DEV_PRESET.capabilities, relicOwnerPage: true },
+    };
+    const client = createCageCallsClient({ network: upgraded, transports: { rpc } });
+
+    const response = await client.relics.owned(owner);
+
+    expect(response.data.items.map((relic) => relic.tokenId)).toEqual([1n]);
+    expect(response.data.provenance).toMatchObject({ onchainBalance: 1n, verified: true });
+    expect(response.data.hasMore).toBe(false);
+    expect(rpc.calls.filter((call) => call.entrypoint === "get_owned_relics")).toHaveLength(3);
+  });
+
+  it("stops a repeated owner cursor and reports the inventory as partial", async () => {
+    const rpc = createMockRpcTransport({
+      calls: {
+        balance_of: ["2", "0"],
+        get_owned_relics: (request) => request.calldata?.[3] === "0"
+          ? encodeOwnedPage([])
+          : request.calldata?.[1] === "0"
+            ? encodeOwnedPage([{ tokenId: 1n, owner }], 800n)
+            : encodeOwnedPage([], 800n),
+      },
+    });
+    const upgraded = {
+      ...SEPOLIA_DEV_PRESET,
+      capabilities: { ...SEPOLIA_DEV_PRESET.capabilities, relicOwnerPage: true },
+    };
+    const client = createCageCallsClient({ network: upgraded, transports: { rpc } });
+
+    const response = await client.relics.owned(owner);
+
+    expect(response.data.items.map((relic) => relic.tokenId)).toEqual([1n]);
+    expect(response.data.provenance).toMatchObject({ onchainBalance: 2n, verified: false });
+    expect(response.data.hasMore).toBe(true);
+    expect(response.meta.complete).toBe(false);
+    expect(response.meta.warnings.map((warning) => warning.code)).toEqual(expect.arrayContaining([
+      "RPC_CURSOR_STALLED",
+      "RPC_BALANCE_MISMATCH",
+    ]));
+  });
+
   it("verifies historical Torii candidates through owner_of on legacy deployments", async () => {
     const rpc = createMockRpcTransport({
       calls: {

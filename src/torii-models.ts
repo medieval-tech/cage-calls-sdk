@@ -1,4 +1,5 @@
 import { AllSourcesFailedError } from "./errors.js";
+import { resolveRequestBudget } from "./core.js";
 import type { RepositoryContext } from "./repositories.js";
 import { transportAttemptsFromError, type ToriiModelRequest } from "./transports.js";
 import type { DataWarning, RequestOptions, SourceAttempt } from "./types.js";
@@ -23,10 +24,11 @@ export async function readAllToriiModels<T>(
   const warnings: DataWarning[] = [];
   let cursor: string | undefined;
   let exhausted = false;
+  const budget = resolveRequestBudget(context.budget, options);
 
   try {
-    for (let page = 0; page < context.budget.maxToriiPages && items.length < context.budget.maxToriiItems; page += 1) {
-      const remaining = context.budget.maxToriiItems - items.length;
+    for (let page = 0; page < budget.maxToriiPages && items.length < budget.maxToriiItems; page += 1) {
+      const remaining = budget.maxToriiItems - items.length;
       const response = await context.torii.model<Record<string, unknown>>({
         ...request,
         first: Math.min(1_000, remaining),
@@ -58,16 +60,16 @@ export async function readAllToriiModels<T>(
     ]);
   }
 
-  if (!exhausted && items.length >= context.budget.maxToriiItems) {
+  if (!exhausted && items.length >= budget.maxToriiItems) {
     warnings.push({
       code: "TORII_ITEM_LIMIT",
-      message: `${request.model} enumeration reached the ${context.budget.maxToriiItems} item budget.`,
+      message: `${request.model} enumeration reached the ${budget.maxToriiItems} item budget.`,
       source: "torii",
     });
   } else if (!exhausted && !warnings.some((warning) => warning.code === "TORII_CURSOR_STALLED")) {
     warnings.push({
       code: "TORII_PAGE_LIMIT",
-      message: `${request.model} enumeration reached the ${context.budget.maxToriiPages} page budget.`,
+      message: `${request.model} enumeration reached the ${budget.maxToriiPages} page budget.`,
       source: "torii",
     });
   }

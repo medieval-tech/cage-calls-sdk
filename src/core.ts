@@ -1,13 +1,13 @@
 import { ValidationError } from "./errors.js";
-import type { DataResult, DataSource, DataWarning, RequestBudget, SdkLogger, SourceAttempt } from "./types.js";
+import type { DataResult, DataSource, DataWarning, RequestBudget, RequestOptions, SdkLogger, SourceAttempt } from "./types.js";
 
 export const DEFAULT_REQUEST_BUDGET: Readonly<RequestBudget> = Object.freeze({
   timeoutMs: 12_000,
   maxConcurrency: 5,
-  maxRpcPages: 20,
-  maxRpcItems: 2_000,
-  maxToriiPages: 50,
-  maxToriiItems: 50_000,
+  maxRpcPages: 500,
+  maxRpcItems: 100_000,
+  maxToriiPages: 1_000,
+  maxToriiItems: 100_000,
   pageSize: 100,
 });
 
@@ -19,6 +19,10 @@ export function resolveBudget(value?: Partial<RequestBudget>): RequestBudget {
     }
   }
   return budget;
+}
+
+export function resolveRequestBudget(budget: RequestBudget, options?: RequestOptions): RequestBudget {
+  return resolveBudget({ ...budget, ...options?.traversal });
 }
 
 export function createDataResult<T>(args: {

@@ -58,29 +58,32 @@ export function createMockRpcTransport(input: {
 }
 
 export function createMockToriiTransport(input: {
-  models?: Record<string, ToriiConnection<Record<string, unknown>> | Error>;
+  models?: Record<string, ToriiConnection<Record<string, unknown>> | Error | ((request: ToriiModelRequest) => ToriiConnection<Record<string, unknown>>)>;
   events?: ToriiConnection<ToriiRawEvent> | Error;
-  tokenBalances?: ToriiTokenBalanceConnection | Error;
-  tokens?: ToriiTokenConnection | Error;
+  tokenBalances?: ToriiTokenBalanceConnection | Error | ((request: { offset?: number; limit?: number }) => ToriiTokenBalanceConnection);
+  tokens?: ToriiTokenConnection | Error | ((request: { offset?: number; limit?: number }) => ToriiTokenConnection);
 } = {}): ToriiTransport {
   return {
     async query<T>() { throw new Error("Raw mock Torii query is not configured."); },
     async model<T>(request: ToriiModelRequest) {
       const value = input.models?.[request.model];
       if (value instanceof Error) throw value;
-      return ok((value ?? { edges: [], totalCount: 0, pageInfo: { hasNextPage: false } }) as ToriiConnection<T>, "torii", `model:${request.model}`);
+      const data = typeof value === "function" ? value(request) : value;
+      return ok((data ?? { edges: [], totalCount: 0, pageInfo: { hasNextPage: false } }) as ToriiConnection<T>, "torii", `model:${request.model}`);
     },
     async events() {
       if (input.events instanceof Error) throw input.events;
       return ok(input.events ?? { edges: [], totalCount: 0, pageInfo: { hasNextPage: false } }, "torii", "events");
     },
-    async tokenBalances() {
+    async tokenBalances(_account, request = {}) {
       if (input.tokenBalances instanceof Error) throw input.tokenBalances;
-      return ok(input.tokenBalances ?? { edges: [], totalCount: 0 }, "torii", "tokenBalances");
+      const data = typeof input.tokenBalances === "function" ? input.tokenBalances(request) : input.tokenBalances;
+      return ok(data ?? { edges: [], totalCount: 0 }, "torii", "tokenBalances");
     },
-    async tokens() {
+    async tokens(_contract, request = {}) {
       if (input.tokens instanceof Error) throw input.tokens;
-      return ok(input.tokens ?? { edges: [], totalCount: 0 }, "torii", "tokens");
+      const data = typeof input.tokens === "function" ? input.tokens(request) : input.tokens;
+      return ok(data ?? { edges: [], totalCount: 0 }, "torii", "tokens");
     },
   };
 }

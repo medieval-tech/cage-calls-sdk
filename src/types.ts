@@ -115,8 +115,16 @@ export interface CageCallsNetwork {
   capabilities: Readonly<DeploymentCapabilities>;
 }
 
+export interface TraversalLimits {
+  maxRpcPages: number;
+  maxRpcItems: number;
+  maxToriiPages: number;
+  maxToriiItems: number;
+}
+
 export interface RequestOptions {
   signal?: AbortSignal;
+  traversal?: Partial<TraversalLimits>;
 }
 
 export interface SdkLogger {
@@ -126,13 +134,9 @@ export interface SdkLogger {
   error?(message: string, context?: Readonly<Record<string, unknown>>): void;
 }
 
-export interface RequestBudget {
+export interface RequestBudget extends TraversalLimits {
   timeoutMs: number;
   maxConcurrency: number;
-  maxRpcPages: number;
-  maxRpcItems: number;
-  maxToriiPages: number;
-  maxToriiItems: number;
   pageSize: number;
 }
 

@@ -1563,17 +1563,9 @@ export interface RepositoryContext {
 }
 
 // @public (undocumented)
-export interface RequestBudget {
+export interface RequestBudget extends TraversalLimits {
     // (undocumented)
     maxConcurrency: number;
-    // (undocumented)
-    maxRpcItems: number;
-    // (undocumented)
-    maxRpcPages: number;
-    // (undocumented)
-    maxToriiItems: number;
-    // (undocumented)
-    maxToriiPages: number;
     // (undocumented)
     pageSize: number;
     // (undocumented)
@@ -1584,6 +1576,8 @@ export interface RequestBudget {
 export interface RequestOptions {
     // (undocumented)
     signal?: AbortSignal;
+    // (undocumented)
+    traversal?: Partial<TraversalLimits>;
 }
 
 // @public (undocumented)
@@ -1591,6 +1585,9 @@ export function resolveBudget(value?: Partial<RequestBudget>): RequestBudget;
 
 // @public (undocumented)
 export function resolveNetwork(value: NetworkName | CageCallsNetwork): Readonly<CageCallsNetwork>;
+
+// @public (undocumented)
+export function resolveRequestBudget(budget: RequestBudget, options?: RequestOptions): RequestBudget;
 
 // @public (undocumented)
 export interface RoleMembership {
@@ -1951,6 +1948,18 @@ export interface TransportResult<T> {
     blockNumber?: bigint;
     // (undocumented)
     data: T;
+}
+
+// @public (undocumented)
+export interface TraversalLimits {
+    // (undocumented)
+    maxRpcItems: number;
+    // (undocumented)
+    maxRpcPages: number;
+    // (undocumented)
+    maxToriiItems: number;
+    // (undocumented)
+    maxToriiPages: number;
 }
 
 // @public (undocumented)

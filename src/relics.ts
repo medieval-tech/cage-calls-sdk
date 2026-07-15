@@ -1,4 +1,4 @@
-import { createDataResult, mapConcurrent } from "./core.js";
+import { createDataResult, mapConcurrent, resolveRequestBudget } from "./core.js";
 import { clampPageSize, encodeU256, normalizeAddress, sameAddress } from "./codecs.js";
 import {
   decodeByteArrayRpc,
@@ -375,25 +375,37 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
   async function toriiOwned(
     owner: Address,
     attempts: SourceAttempt[],
+    warnings: DataWarning[],
     options: RequestOptions,
   ): Promise<{ relics: Relic[]; complete: boolean }> {
     if (!context.torii) return { relics: [], complete: false };
+    const budget = resolveRequestBudget(context.budget, options);
     const relics = new Map<string, Relic>();
     let offset = 0;
     let complete = false;
-    for (let page = 0; page < context.budget.maxToriiPages; page += 1) {
-      const response = await context.torii.tokenBalances(owner, { offset, limit: context.budget.pageSize }, options);
+    let pages = 0;
+    for (; pages < budget.maxToriiPages && relics.size < budget.maxToriiItems; pages += 1) {
+      const response = await context.torii.tokenBalances(owner, { offset, limit: budget.pageSize }, options);
       attempts.push(...response.attempts);
       for (const edge of response.data.edges) {
         const mapped = edge.node.tokenMetadata ? mapToriiRelic(edge.node.tokenMetadata, context.network.contracts.RelicNFT) : undefined;
-        if (mapped && relics.size < context.budget.maxRpcItems) relics.set(mapped.tokenId.toString(), mapped);
+        if (mapped && relics.size < budget.maxToriiItems) relics.set(mapped.tokenId.toString(), mapped);
       }
       offset += response.data.edges.length;
       if (response.data.edges.length === 0 || offset >= response.data.totalCount) {
         complete = true;
         break;
       }
-      if (relics.size >= context.budget.maxRpcItems) break;
+    }
+    if (!complete) {
+      const itemLimit = relics.size >= budget.maxToriiItems;
+      warnings.push({
+        code: itemLimit ? "TORII_ITEM_LIMIT" : "TORII_PAGE_LIMIT",
+        message: itemLimit
+          ? `Relic ownership enumeration reached the ${budget.maxToriiItems} item budget at offset ${offset}.`
+          : `Relic ownership enumeration reached the ${budget.maxToriiPages} page budget at offset ${offset}.`,
+        source: "torii",
+      });
     }
     return { relics: Array.from(relics.values()), complete };
   }
@@ -423,15 +435,22 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     return hydrateToriiRelics(verified, attempts, warnings, options);
   }
 
-  async function verifyToriiInventory(owner: Address, attempts: SourceAttempt[], options: RequestOptions): Promise<{ relics: Relic[]; complete: boolean }> {
+  async function verifyToriiInventory(
+    owner: Address,
+    attempts: SourceAttempt[],
+    warnings: DataWarning[],
+    options: RequestOptions,
+  ): Promise<{ relics: Relic[]; complete: boolean }> {
     if (!context.torii) return { relics: [], complete: false };
+    const budget = resolveRequestBudget(context.budget, options);
     const tokenIds: bigint[] = [];
     let offset = 0;
     let complete = false;
-    for (let page = 0; page < context.budget.maxToriiPages && tokenIds.length < context.budget.maxRpcItems; page += 1) {
-      const response = await context.torii.tokens(context.network.contracts.RelicNFT, { offset, limit: context.budget.pageSize }, options);
+    for (let page = 0; page < budget.maxToriiPages && tokenIds.length < budget.maxToriiItems; page += 1) {
+      const response = await context.torii.tokens(context.network.contracts.RelicNFT, { offset, limit: budget.pageSize }, options);
       attempts.push(...response.attempts);
       for (const edge of response.data.edges) {
+        if (tokenIds.length >= budget.maxToriiItems) break;
         const token = edge.node.tokenMetadata;
         if (!token?.tokenId) continue;
         try { tokenIds.push(BigInt(token.tokenId)); } catch { /* skip malformed IDs */ }
@@ -441,6 +460,16 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
         complete = true;
         break;
       }
+    }
+    if (!complete) {
+      const itemLimit = tokenIds.length >= budget.maxToriiItems;
+      warnings.push({
+        code: itemLimit ? "TORII_ITEM_LIMIT" : "TORII_PAGE_LIMIT",
+        message: itemLimit
+          ? `Relic inventory verification reached the ${budget.maxToriiItems} item budget at offset ${offset}.`
+          : `Relic inventory verification reached the ${budget.maxToriiPages} page budget at offset ${offset}.`,
+        source: "torii",
+      });
     }
     const ownedIds = (await mapConcurrent(tokenIds, context.budget.maxConcurrency, async (tokenId) => {
       try {
@@ -459,26 +488,54 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
 
   async function rpcOwned(
     owner: Address,
+    expectedBalance: bigint,
     toriiInventory: { relics: Relic[]; complete: boolean },
     attempts: SourceAttempt[],
     warnings: DataWarning[],
     options: RequestOptions,
   ): Promise<{ relics: Relic[]; complete: boolean }> {
+    const budget = resolveRequestBudget(context.budget, options);
     const ownerPage = context.capabilities.has("relicOwnerPage") || await context.capabilities.probe("relicOwnerPage", options.signal);
     if (ownerPage) {
       const relics = new Map<string, Relic>();
       let cursor = 0n;
       let complete = false;
-      for (let page = 0; page < context.budget.maxRpcPages; page += 1) {
+      let pages = 0;
+      const seen = new Set<bigint>();
+      for (; pages < budget.maxRpcPages && relics.size < budget.maxRpcItems; pages += 1) {
+        const previousCursor = cursor;
         const response = await rpcCall(context, "get_owned_relics", [normalizeAddress(owner), ...encodeU256(cursor), "200", "20"], options);
         attempts.push(...response.attempts);
         const decoded = decodeOwnedRelicPageRpc(response.data);
         for (const relic of decoded.items) relics.set(relic.tokenId.toString(), relic);
         cursor = decoded.cursor;
+        if (BigInt(relics.size) >= expectedBalance) {
+          complete = true;
+          break;
+        }
         if (cursor === 0n) {
           complete = true;
           break;
         }
+        if (cursor === previousCursor || seen.has(cursor)) {
+          warnings.push({
+            code: "RPC_CURSOR_STALLED",
+            message: `Relic owner pagination stopped at repeated cursor ${cursor}.`,
+            source: "starknet-rpc",
+          });
+          break;
+        }
+        seen.add(cursor);
+      }
+      if (!complete && !warnings.some((warning) => warning.code === "RPC_CURSOR_STALLED")) {
+        const itemLimit = relics.size >= budget.maxRpcItems;
+        warnings.push({
+          code: itemLimit ? "RPC_ITEM_LIMIT" : "RPC_PAGE_LIMIT",
+          message: itemLimit
+            ? `Relic owner pagination reached the ${budget.maxRpcItems} item budget at cursor ${cursor}.`
+            : `Relic owner pagination reached the ${budget.maxRpcPages} page budget after scanning up to ${budget.maxRpcPages * 200} token IDs; next cursor ${cursor}.`,
+          source: "starknet-rpc",
+        });
       }
       const hydrated = await mapConcurrent(Array.from(relics.values()), context.budget.maxConcurrency, (relic) => hydrateJson(context, relic, attempts, warnings, options));
       return { relics: hydrated, complete };
@@ -489,19 +546,41 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       const relics = new Map<string, Relic>();
       let cursor = 0n;
       let complete = false;
-      for (let page = 0; page < Math.min(context.budget.maxRpcPages, 20); page += 1) {
+      let pages = 0;
+      const seen = new Set<bigint>();
+      for (; pages < budget.maxRpcPages && relics.size < budget.maxRpcItems; pages += 1) {
+        const previousCursor = cursor;
         const response = await rpcCall(context, "get_relic_feed", [...encodeU256(cursor), "20"], options);
         attempts.push(...response.attempts);
         const rows = decodeRelicRowsRpc(response.data);
         for (const relic of rows) if (relic.owner && sameAddress(relic.owner, owner)) relics.set(relic.tokenId.toString(), relic);
+        if (BigInt(relics.size) >= expectedBalance) {
+          complete = true;
+          break;
+        }
         const oldest = rows.at(-1)?.tokenId ?? 0n;
         if (rows.length < 20 || oldest <= 1n) {
           complete = true;
           break;
         }
         cursor = oldest - 1n;
+        if (cursor === previousCursor || seen.has(cursor)) {
+          warnings.push({ code: "RPC_CURSOR_STALLED", message: `Legacy relic pagination stopped at repeated cursor ${cursor}.`, source: "starknet-rpc" });
+          break;
+        }
+        seen.add(cursor);
       }
-      warnings.push({ code: "LEGACY_RELIC_SCAN", message: "Ownership used the capped legacy relic feed scan.", source: "starknet-rpc" });
+      warnings.push({ code: "LEGACY_RELIC_SCAN", message: "Ownership used exhaustive legacy relic feed scanning within the configured RPC budget.", source: "starknet-rpc" });
+      if (!complete && !warnings.some((warning) => warning.code === "RPC_CURSOR_STALLED")) {
+        const itemLimit = relics.size >= budget.maxRpcItems;
+        warnings.push({
+          code: itemLimit ? "RPC_ITEM_LIMIT" : "RPC_PAGE_LIMIT",
+          message: itemLimit
+            ? `Legacy relic ownership reached the ${budget.maxRpcItems} item budget at cursor ${cursor}.`
+            : `Legacy relic ownership reached the ${budget.maxRpcPages} page budget; next cursor ${cursor}.`,
+          source: "starknet-rpc",
+        });
+      }
       const hydrated = await mapConcurrent(Array.from(relics.values()), context.budget.maxConcurrency, (relic) => hydrateJson(context, relic, attempts, warnings, options));
       return { relics: hydrated, complete };
     }
@@ -512,7 +591,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     }
 
     warnings.push({ code: "TORII_INVENTORY_RPC_VERIFICATION", message: "The deployment lacks owner pagination; token ownership was verified individually through RPC.", source: "starknet-rpc" });
-    return verifyToriiInventory(owner, attempts, options);
+    return verifyToriiInventory(owner, attempts, warnings, options);
   }
 
   return {
@@ -671,7 +750,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       let toriiInventory: { relics: Relic[]; complete: boolean } = { relics: [], complete: false };
       if (context.torii) {
         try {
-          toriiInventory = await toriiOwned(owner, attempts, options);
+          toriiInventory = await toriiOwned(owner, attempts, warnings, options);
           let torii = toriiInventory.relics;
           if (BigInt(torii.length) === balance) {
             torii = await hydrateToriiRelics(torii, attempts, warnings, options);
@@ -689,7 +768,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       }
 
       try {
-        const discovered = await rpcOwned(owner, toriiInventory, attempts, warnings, options);
+        const discovered = await rpcOwned(owner, balance, toriiInventory, attempts, warnings, options);
         const verified = BigInt(discovered.relics.length) === balance;
         if (discovered.relics.length === 0 && balance > 0n) throw new AllSourcesFailedError("relics.owned", attempts);
         if (!verified) warnings.push({ code: "RPC_BALANCE_MISMATCH", message: `RPC discovery found ${discovered.relics.length} of ${balance} relics.`, source: "starknet-rpc" });

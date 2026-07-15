@@ -65,6 +65,44 @@ export function encodeOwnedPage(rows: Array<{ tokenId: bigint; owner: Address; t
   return [...encodeRelicRows(rows), ...encodeU256(cursor)];
 }
 
+export function encodeFightBuys(rows: Array<{
+  fightId: bigint;
+  buyer: Address;
+  marketId: bigint;
+  choiceIndex: number;
+  amount: bigint;
+  boughtAt: bigint;
+}>): string[] {
+  return [rows.length.toString(), ...rows.flatMap((row) => [
+    ...encodeU256(row.fightId), row.buyer, ...encodeU256(row.marketId), row.choiceIndex.toString(),
+    ...encodeU256(row.amount), row.boughtAt.toString(),
+  ])];
+}
+
+export function encodeFightFeed(rows: Array<{
+  fightId: bigint;
+  marketId: bigint;
+  settled?: boolean;
+  winnerIndex?: number;
+}>): string[] {
+  return [rows.length.toString(), ...rows.flatMap((row) => [
+    ...encodeU256(row.fightId), ...encodeU256(1n), ...encodeByteArray("Cage Night"), ...encodeU256(row.marketId),
+    ...encodeU256(1n), ...encodeByteArray("A"), ...encodeByteArray("Lightweight"), ...encodeU256(1n), ...encodeByteArray("A"),
+    ...encodeU256(2n), ...encodeByteArray("B"), ...encodeByteArray("Lightweight"), ...encodeU256(2n), ...encodeByteArray("B"),
+    "1700000000", "0", "0", "1700000000", ...encodeU256(4n), "0x5", "2", "0x6",
+    "10", "20", "30", row.settled ? "40" : "0",
+    ...encodeU256(30n), ...encodeU256(70n), ...encodeU256(0n), ...encodeU256(100n),
+    ...encodeU256(1n), ...encodeU256(0n), ...encodeU256(0n),
+    ...encodeU256(100n), ...encodeU256(0n), ...encodeU256(0n),
+    ...encodeU256(row.settled && row.winnerIndex === 0 ? 1n : 0n),
+    ...encodeU256(row.settled && row.winnerIndex === 1 ? 1n : 0n),
+    ...encodeU256(0n), ...encodeU256(row.settled ? 1n : 0n),
+    "0", row.settled ? "1" : "0", (row.winnerIndex ?? 255).toString(),
+    ...encodeU256(row.settled ? 1n : 0n), ...encodeU256(100n), ...encodeU256(0n),
+    "0", "255", ...encodeU256(0n), "0", "0", "0", ...encodeU256(0n),
+  ])];
+}
+
 export const toriiToken = (tokenId: bigint, contractAddress: Address, complete = true) => ({
   __typename: "ERC721__Token",
   tokenId: tokenId.toString(),

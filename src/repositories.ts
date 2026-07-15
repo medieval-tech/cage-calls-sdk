@@ -1,4 +1,4 @@
-import { createDataResult, mapConcurrent } from "./core.js";
+import { createDataResult, mapConcurrent, resolveRequestBudget } from "./core.js";
 import { clampPageSize, encodeU256, normalizeAddress, normalizeFelt } from "./codecs.js";
 import {
   decodeFightBuyRpc,
@@ -151,11 +151,16 @@ export function createFightersRepository(context: RepositoryContext): FightersRe
       if (unique.length === 0) return result(context, startedAt, "derived", [], []);
       const supportsBatch = context.capabilities.has("fighterBatch") || await context.capabilities.probe("fighterBatch", options.signal);
       if (supportsBatch) {
-        const bounded = unique.slice(0, 20);
-        const calldata = [bounded.length.toString(), ...bounded.flatMap(encodeU256)];
-        const response = await rpcCall(context, "FighterRegistry", "get_fighters", calldata, options);
-        return result(context, startedAt, "starknet-rpc", decodeFightersRpc(response.data), response.attempts, bounded.length === unique.length,
-          bounded.length === unique.length ? [] : [{ code: "BUDGET_LIMIT", message: "Fighter batch was capped at 20 items." }]);
+        const fighters: Fighter[] = [];
+        const attempts: SourceAttempt[] = [];
+        for (let index = 0; index < unique.length; index += 20) {
+          const chunk = unique.slice(index, index + 20);
+          const calldata = [chunk.length.toString(), ...chunk.flatMap(encodeU256)];
+          const response = await rpcCall(context, "FighterRegistry", "get_fighters", calldata, options);
+          attempts.push(...response.attempts);
+          fighters.push(...decodeFightersRpc(response.data));
+        }
+        return result(context, startedAt, "starknet-rpc", fighters, attempts);
       }
       const values = await mapConcurrent(unique, context.budget.maxConcurrency, (fighterId) => get(fighterId, options));
       return result(
@@ -368,8 +373,9 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
         }, attempts);
       }
       if (!context.torii) throw new UnsupportedCapabilityError("fight buy enumeration");
+      const budget = resolveRequestBudget(context.budget, options);
       const requestedEnd = offset + size;
-      const fetchSize = Math.min(requestedEnd, context.budget.maxToriiItems);
+      const fetchSize = Math.min(requestedEnd, budget.maxToriiItems);
       const response = await context.torii.model<Record<string, unknown>>({
         model: "FightBuy",
         selection: FIGHT_BUY_SELECTION,
@@ -379,14 +385,14 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
       const items = response.data.edges.slice(offset, requestedEnd).map((edge) => mapToriiFightBuy(edge.node));
       const nextOffset = offset + items.length;
       const hasMore = nextOffset < response.data.totalCount;
-      const budgetCapped = requestedEnd > context.budget.maxToriiItems;
+      const budgetCapped = requestedEnd > budget.maxToriiItems;
       return result(context, startedAt, "torii", {
         items,
         ...(hasMore && items.length > 0 ? { cursor: nextOffset } : {}),
         hasMore,
       }, response.attempts, !budgetCapped, budgetCapped ? [{
         code: "BUDGET_LIMIT",
-        message: `Fight buy pagination is capped at ${context.budget.maxToriiItems} Torii records.`,
+        message: `Fight buy pagination is capped at ${budget.maxToriiItems} Torii records.`,
         source: "torii",
       }] : []);
     },

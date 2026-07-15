@@ -1,17 +1,21 @@
 import { createDataResult } from "./core.js";
 import { normalizeAddress, normalizeFelt } from "./codecs.js";
 import { decodeSingleBool, decodeSingleU256, scalarBoolean, scalarNumber, scalarString } from "./decoders.js";
-import { UnsupportedCapabilityError, ValidationError } from "./errors.js";
+import { AllSourcesFailedError, UnsupportedCapabilityError, ValidationError } from "./errors.js";
 import type { RepositoryContext } from "./repositories.js";
+import { readAllToriiModels } from "./torii-models.js";
+import { transportAttemptsFromError } from "./transports.js";
 import type {
   Address,
   ContractName,
   DataResult,
+  DataWarning,
   Felt,
   Page,
   RegisteredAsset,
   RequestOptions,
   RoleMembership,
+  SourceAttempt,
 } from "./types.js";
 
 const ROLE_MODELS = {
@@ -89,21 +93,36 @@ export function createAdminRepository(context: RepositoryContext): AdminReposito
       const startedAt = context.now();
       if (!context.torii) throw new UnsupportedCapabilityError("role enumeration without Torii");
       const values: RoleMembership[] = [];
-      const attempts = [];
+      const attempts: SourceAttempt[] = [];
+      const warnings: DataWarning[] = [];
+      let successfulModels = 0;
+      let complete = true;
       for (const [contract, model] of Object.entries(ROLE_MODELS) as Array<[keyof typeof ROLE_MODELS, string]>) {
         const addressField = model === "RelicMinter" ? "minter" : "admin";
-        const response = await context.torii.model<Record<string, unknown>>({ model, selection: [addressField, "active"], first: 100 }, options);
-        attempts.push(...response.attempts);
-        for (const edge of response.data.edges) {
-          values.push({
+        try {
+          const response = await readAllToriiModels(context, { model, selection: [addressField, "active"] }, (node): RoleMembership => ({
             contract,
-            account: normalizeAddress(String(edge.node[addressField])),
+            account: normalizeAddress(String(node[addressField])),
             role: model,
-            active: scalarBoolean(edge.node.active, "active"),
+            active: scalarBoolean(node.active, "active"),
+          }), options);
+          successfulModels += 1;
+          values.push(...response.items);
+          attempts.push(...response.attempts);
+          warnings.push(...response.warnings);
+          complete &&= response.complete;
+        } catch (error) {
+          complete = false;
+          attempts.push(...transportAttemptsFromError(error));
+          warnings.push({
+            code: "TORII_ROLE_MODEL_UNAVAILABLE",
+            message: `${model} role enumeration failed; other role models were retained.`,
+            source: "torii" as const,
           });
         }
       }
-      return createDataResult({ data: values, source: "torii", complete: true, attempts, startedAt, now: context.now, ...(context.logger ? { logger: context.logger } : {}) });
+      if (successfulModels === 0) throw new AllSourcesFailedError("admin.roles", attempts);
+      return createDataResult({ data: values, source: "torii", complete, attempts, warnings, startedAt, now: context.now, ...(context.logger ? { logger: context.logger } : {}) });
     },
     registeredTokens(input = {}, options = {}) { return assets("RegisteredToken", input, options); },
     registeredOracles(input = {}, options = {}) { return assets("RegisteredOracle", input, options); },

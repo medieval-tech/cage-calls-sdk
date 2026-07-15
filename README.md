@@ -4,7 +4,7 @@ Framework-neutral TypeScript access to Cage Calls deployments. The core package 
 decoding, source fallbacks, validation, and typed call construction. It never owns a wallet,
 signs a transaction, or waits for a receipt.
 
-> Status: `0.1.0-next.10`. The API and deployment presets are canary-grade until the production
+> Status: `0.1.0-next.11`. The API and deployment presets are canary-grade until the production
 > client migration and network smoke tests are complete.
 
 ## Install
@@ -55,6 +55,40 @@ console.log(fights.data, fights.meta);
 `DataResult.meta` records the selected source, all attempts, completeness, warnings, timing,
 and the block number when available. Partial but valid data resolves with `complete: false`;
 invalid input, configuration errors, and total source failure throw typed SDK errors.
+
+## Source policy and exhaustive reads
+
+Indexed catalogs and analytics read Torii first. Starknet RPC verifies authoritative state and
+reconstructs missing or incomplete indexed pages when the deployment exposes the additive batch
+and pagination views. The configured primary RPC (for example Alchemy) is tried before the
+Cartridge RPC transport fallback. Cartridge is therefore RPC failover, not a separate index.
+IPFS gateways are used only for optional external NFT metadata hydration.
+
+Default traversal budgets allow up to 100,000 Torii items (1,000 pages) and 100,000 RPC items
+(500 pages). They are safety ceilings rather than result limits: a read that reaches one returns
+the valid rows it found with `complete: false`, an exact warning, and a continuation cursor where
+the repository supports one. Configure shared defaults on the client or override them per call:
+
+```ts
+const client = createCageCallsClient({
+  network: "mainnet",
+  transports,
+  budget: {
+    maxToriiItems: 200_000,
+    maxToriiPages: 2_000,
+    maxRpcItems: 200_000,
+    maxRpcPages: 1_000,
+  },
+});
+
+const snapshot = await client.analytics.snapshot({
+  traversal: { maxToriiItems: 250_000, maxRpcItems: 250_000 },
+});
+```
+
+Contract-defined page sizes are still respected. Repositories iterate those pages, chunk batch
+views, and stop early only when the source proves exhaustion or an authoritative count/balance
+has been satisfied.
 
 ## Reads and call plans
 
