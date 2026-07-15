@@ -56,6 +56,11 @@ describe("RPC transports", () => {
     expect(response.data).toEqual(["0", "0"]);
     expect(response.attempts).toHaveLength(2);
     expect(response.attempts[1]?.fallback).toBe(true);
+    expect(logger.warn).toHaveBeenCalledWith("Cage Calls RPC fallback selected.", expect.objectContaining({
+      primaryEndpoint: "https://primary.example/…",
+      fallbackEndpoint: "https://fallback.example/…",
+      selectedRole: "fallback",
+    }));
     expect(logger.debug).toHaveBeenCalledWith("Cage Calls RPC call completed.", expect.objectContaining({
       contractAddress: "0x1",
       entrypoint: "balance_of",
@@ -181,6 +186,8 @@ describe("RPC transports", () => {
     expect(error).toMatchObject({ attempts: [{ errorCode: "RPC_-32601" }] });
     expect(logger.warn).toHaveBeenCalledWith("Cage Calls RPC request failed.", {
       method: "starknet_call",
+      endpoint: "https://rpc.example/…",
+      endpointRole: "direct",
       errorCode: "RPC_-32601",
       rpcCode: -32601,
     });

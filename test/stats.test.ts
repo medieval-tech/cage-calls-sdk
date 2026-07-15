@@ -63,7 +63,7 @@ describe("relic collection statistics", () => {
     ]));
     expect(stats.minted.byMoveType[0]?.percentage).toBeCloseTo(200 / 3);
     expect(stats.definitions.averages.power).toBe(6);
-    expect(stats.definitions.byFighter[0]).toMatchObject({ key: 1n, label: "Alice", count: 1 });
+    expect(stats.definitions.byFighter[0]).toMatchObject({ key: "alice", label: "Alice", count: 1 });
     expect(stats.minted.byRarityTier.map((entry) => [entry.key, entry.count])).toEqual([["common", 2], ["rare", 1]]);
   });
 
@@ -88,6 +88,48 @@ describe("relic collection statistics", () => {
     expect(stats.minted.count).toBe(1);
   });
 
+  it("derives collection statistics directly from complete Torii token attributes", () => {
+    const indexed = (tokenId: bigint, edition: number): Relic => ({
+      tokenId,
+      name: `Common 3 — Leg Strikes #${edition}`,
+      image: `ipfs://image-${tokenId}`,
+      attributes: [
+        { traitType: "Rarity", value: "Common 3" },
+        { traitType: "Move Type", value: "Sword Strike" },
+        { traitType: "Move Name", value: "Leg Strikes" },
+        { traitType: "Fighter", value: "Alice" },
+        { traitType: "Opponent", value: "Bob" },
+        { traitType: "Season", value: "Season 1" },
+        { traitType: "Fight", value: "Fight #25" },
+        { traitType: "Edition", value: edition },
+        { traitType: "Power", value: 8 },
+        { traitType: "Speed", value: 7 },
+        { traitType: "Control", value: 6 },
+        { traitType: "Risk", value: 5 },
+        { traitType: "Complexity", value: 4 },
+        { traitType: "Versatility", value: 3 },
+      ],
+      metadataSources: ["torii"],
+    });
+    const fighters = [{ fighterId: 1n, name: "Alice", weightClass: "Lightweight", active: true }];
+    const relics = [indexed(1n, 1), indexed(2n, 2)];
+
+    const stats = summarizeRelicCollection(relics, { fighterKeys: ["Alice"] }, fighters);
+
+    expect(stats.coverage).toMatchObject({
+      inventoryCount: 2,
+      metadataCount: 2,
+      indexedMetadataCount: 2,
+      rpcHydratedCount: 0,
+      missingMetadata: 0,
+    });
+    expect(stats.minted).toMatchObject({ count: 2, averages: { power: 8, speed: 7 } });
+    expect(stats.minted.byFighter[0]).toMatchObject({ key: "alice", label: "Alice", count: 2 });
+    expect(stats.minted.byMoveType[0]).toMatchObject({ key: "sword_strike", count: 2 });
+    expect(stats.definitions.count).toBe(1);
+    expect(filterRelicCollection(relics, { fighterKeys: ["alice"] }, fighters)).toHaveLength(2);
+  });
+
   it("paginates the full authoritative collection through the aggregate RPC feed", async () => {
     const rpc = createMockRpcTransport({
       calls: {
@@ -103,7 +145,7 @@ describe("relic collection statistics", () => {
 
     expect(response.data.items.map((item) => item.tokenId)).toEqual([2n, 1n]);
     expect(response.data.pageCount).toBe(2);
-    expect(response.meta.complete).toBe(true);
+    expect(response.meta.complete).toBe(false);
   });
 });
 

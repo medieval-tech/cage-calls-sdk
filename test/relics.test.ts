@@ -20,9 +20,13 @@ describe("relic ownership source policy", () => {
       ...SEPOLIA_DEV_PRESET,
       capabilities: { ...SEPOLIA_DEV_PRESET.capabilities, relicFeed: true },
     };
-    const client = createCageCallsClient({ network: upgraded, transports: { rpc, torii } });
+    const metadata = createMockMetadataTransport({
+      "ipfs://metadata-1": { name: "One", image: "ipfs://one", attributes: [{ trait_type: "Power", value: 1 }] },
+      "ipfs://metadata-2": { name: "Two", image: "ipfs://two", attributes: [{ trait_type: "Power", value: 2 }] },
+    });
+    const client = createCageCallsClient({ network: upgraded, transports: { rpc, torii, metadata } });
 
-    const response = await client.relics.feed({ limit: 2, metadata: "onchain" });
+    const response = await client.relics.feed({ limit: 2 });
 
     expect(response.meta.source).toBe("starknet-rpc");
     expect(response.data.items.map((relic) => relic.tokenId)).toEqual([2n, 1n]);
@@ -30,7 +34,7 @@ describe("relic ownership source policy", () => {
     expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_INVENTORY_EMPTY");
   });
 
-  it("does not request external metadata in onchain-only feed mode", async () => {
+  it("hydrates external JSON for aggregate RPC fallback rows", async () => {
     const rpc = createMockRpcTransport({
       calls: { get_relic_feed: encodeRelicRows([{ tokenId: 1n, owner }]) },
     });
@@ -44,33 +48,38 @@ describe("relic ownership source policy", () => {
     };
     const client = createCageCallsClient({ network: upgraded, transports: { rpc, metadata } });
 
-    const response = await client.relics.feed({ limit: 1, metadata: "onchain" });
+    const response = await client.relics.feed({ limit: 1 });
 
     expect(response.data.items[0]?.metadata?.fightId).toBe(10n);
-    expect(response.meta.complete).toBe(true);
-    expect(getJson).not.toHaveBeenCalled();
+    expect(response.data.items[0]?.name).toBe("External");
+    expect(response.meta.complete).toBe(false);
+    expect(getJson).toHaveBeenCalledTimes(1);
   });
 
-  it("enumerates with Torii first and batch-enriches structured onchain data", async () => {
+  it("enumerates with Torii first and batch-enriches only incomplete rows", async () => {
     const rpc = createMockRpcTransport({
       calls: { get_relics: encodeRelicRows([{ tokenId: 1n, owner }]) },
     });
     const torii = createMockToriiTransport({
       tokens: {
         totalCount: 1,
-        edges: [{ node: { tokenMetadata: toriiToken(1n, SEPOLIA_DEV_PRESET.contracts.RelicNFT) } }],
+        edges: [{ node: { tokenMetadata: toriiToken(1n, SEPOLIA_DEV_PRESET.contracts.RelicNFT, false) } }],
       },
+    });
+    const metadata = createMockMetadataTransport({
+      "ipfs://metadata-1": { name: "Hydrated", image: "ipfs://image", attributes: [{ trait_type: "Power", value: 8 }] },
     });
     const upgraded = {
       ...SEPOLIA_DEV_PRESET,
       capabilities: { ...SEPOLIA_DEV_PRESET.capabilities, relicFeed: true, relicBatch: true },
     };
-    const client = createCageCallsClient({ network: upgraded, transports: { rpc, torii } });
+    const client = createCageCallsClient({ network: upgraded, transports: { rpc, torii, metadata } });
 
-    const response = await client.relics.feed({ limit: 1, metadata: "onchain" });
+    const response = await client.relics.feed({ limit: 1 });
 
     expect(response.meta.source).toBe("torii");
     expect(response.data.items[0]?.metadata?.fightId).toBe(10n);
+    expect(response.data.items[0]?.name).toBe("Hydrated");
     expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["get_relics"]);
   });
 
@@ -132,12 +141,74 @@ describe("relic ownership source policy", () => {
     expect(rpc.calls).toEqual([]);
   });
 
+  it("enumerates complete Torii collections beyond the former 1,000-row window without RPC", async () => {
+    const totalRows = 1_205;
+    const rpc = createMockRpcTransport();
+    const torii = createMockToriiTransport({
+      tokens: ({ offset = 0, limit = 100 }) => ({
+        totalCount: totalRows + 1,
+        edges: Array.from({ length: Math.min(limit, totalRows - offset) }, (_, index) => ({
+          node: { tokenMetadata: toriiToken(BigInt(offset + index + 1), SEPOLIA_DEV_PRESET.contracts.RelicNFT) },
+        })),
+      }),
+    });
+    const client = createCageCallsClient({ network: SEPOLIA_DEV_PRESET, transports: { rpc, torii } });
+
+    const response = await client.relics.collection({ pageSize: 200, enrichFighters: false });
+
+    expect(response.data.items).toHaveLength(totalRows);
+    expect(response.data.pageCount).toBe(7);
+    expect(response.meta.complete).toBe(true);
+    expect(rpc.calls).toEqual([]);
+  });
+
+  it("hydrates exactly the incomplete Torii rows across a full collection", async () => {
+    const totalRows = 1_205;
+    const missingIds = new Set([1n, 201n, 401n, 601n, 1_205n]);
+    const requestedIds: bigint[] = [];
+    const rpc = createMockRpcTransport({
+      calls: {
+        get_relics: (request) => {
+          const calldata = request.calldata ?? [];
+          const count = Number(calldata[0] ?? "0");
+          const ids = Array.from({ length: count }, (_, index) => BigInt(calldata[1 + index * 2] ?? "0"));
+          requestedIds.push(...ids);
+          return encodeRelicRows(ids.map((tokenId) => ({ tokenId, owner })));
+        },
+      },
+    });
+    const torii = createMockToriiTransport({
+      tokens: ({ offset = 0, limit = 100 }) => ({
+        totalCount: totalRows + 1,
+        edges: Array.from({ length: Math.min(limit, totalRows - offset) }, (_, index) => {
+          const tokenId = BigInt(offset + index + 1);
+          return { node: { tokenMetadata: toriiToken(tokenId, SEPOLIA_DEV_PRESET.contracts.RelicNFT, !missingIds.has(tokenId)) } };
+        }),
+      }),
+    });
+    const metadata = createMockMetadataTransport(Object.fromEntries(
+      Array.from(missingIds, (tokenId) => [`ipfs://metadata-${tokenId}`, {
+        name: `Hydrated #${tokenId}`,
+        image: `ipfs://image-${tokenId}`,
+        attributes: [{ trait_type: "Power", value: 8 }],
+      }]),
+    ));
+    const client = createCageCallsClient({ network: SEPOLIA_DEV_PRESET, transports: { rpc, torii, metadata } });
+
+    const response = await client.relics.collection({ pageSize: 200, enrichFighters: false });
+
+    expect(response.data.items).toHaveLength(totalRows);
+    expect(new Set(requestedIds)).toEqual(missingIds);
+    expect(requestedIds).toHaveLength(missingIds.size);
+    expect(response.meta.complete).toBe(true);
+  });
+
   it("marks an empty Torii inventory unverified when no aggregate fallback is deployed", async () => {
     const rpc = createMockRpcTransport();
     const torii = createMockToriiTransport({ tokens: { totalCount: 0, edges: [] } });
     const client = createCageCallsClient({ network: "mainnet", transports: { rpc, torii } });
 
-    const response = await client.relics.feed({ metadata: "onchain" });
+    const response = await client.relics.feed();
 
     expect(response.data.items).toEqual([]);
     expect(response.meta.complete).toBe(false);

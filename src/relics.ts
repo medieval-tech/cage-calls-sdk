@@ -37,16 +37,9 @@ export interface OwnedRelicsPage extends Page<Relic> {
   provenance: RelicOwnershipProvenance;
 }
 
-export type RelicMetadataMode = "external" | "onchain";
-
-export interface RelicRequestOptions extends RequestOptions {
-  metadata?: RelicMetadataMode;
-}
-
 export interface RelicFeedInput {
   limit?: number;
   cursor?: bigint;
-  metadata?: RelicMetadataMode;
 }
 
 export interface RelicCollectionInput {
@@ -62,8 +55,8 @@ export interface RelicCollection {
 }
 
 export interface RelicsRepository {
-  get(tokenId: bigint, options?: RelicRequestOptions): Promise<DataResult<Relic>>;
-  getMany(tokenIds: readonly bigint[], options?: RelicRequestOptions): Promise<DataResult<Relic[]>>;
+  get(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Relic>>;
+  getMany(tokenIds: readonly bigint[], options?: RequestOptions): Promise<DataResult<Relic[]>>;
   all(input?: RelicCollectionInput, options?: RequestOptions): Promise<DataResult<Relic[]>>;
   page(input?: RelicFeedInput, options?: RequestOptions): Promise<DataResult<Page<Relic, bigint>>>;
   /** @deprecated Use page(). */
@@ -80,8 +73,6 @@ type DecodedRelicFeedCursor =
   | { kind: "legacy-torii"; offset: number }
   | { kind: "torii"; offset: number; tokenRows: number; rpcCursor: bigint }
   | { kind: "rpc"; rpcCursor: bigint };
-
-const TORII_TOKEN_OFFSET_WINDOW = 1_000;
 
 function encodeOpaqueRelicFeedCursor(value: string): bigint {
   let encoded = 0n;
@@ -206,10 +197,6 @@ function metadataComplete(relic: Relic): boolean {
   return Boolean(relic.name && (relic.image || relic.animationUrl) && relic.attributes.length > 0);
 }
 
-function onchainComplete(relic: Relic): boolean {
-  return Boolean(relic.owner && relic.metadata);
-}
-
 function onchainAttributes(relic: Relic): RelicMetadataAttribute[] {
   const metadata = relic.metadata;
   if (!metadata) return [];
@@ -259,11 +246,7 @@ async function rpcCall(context: RelicContext, entrypoint: string, calldata: stri
   return context.rpc.call({ contractAddress: context.network.contracts.RelicNFT, entrypoint, calldata }, options);
 }
 
-async function hydrateJson(context: RelicContext, relic: Relic, attempts: SourceAttempt[], warnings: DataWarning[], options: RelicRequestOptions): Promise<Relic> {
-  if (options.metadata === "onchain") {
-    const attributes = relic.attributes.length > 0 ? relic.attributes : onchainAttributes(relic);
-    return { ...relic, attributes };
-  }
+async function hydrateJson(context: RelicContext, relic: Relic, attempts: SourceAttempt[], warnings: DataWarning[], options: RequestOptions): Promise<Relic> {
   if (!context.metadata || !relic.tokenUri) {
     const attributes = relic.attributes.length > 0 ? relic.attributes : onchainAttributes(relic);
     return { ...relic, attributes };
@@ -284,7 +267,7 @@ async function hydrateJson(context: RelicContext, relic: Relic, attempts: Source
 }
 
 export function createRelicsRepository(context: RelicContext): RelicsRepository {
-  const get = async (tokenId: bigint, options: RelicRequestOptions = {}) => {
+  const get = async (tokenId: bigint, options: RequestOptions = {}) => {
     if (tokenId <= 0n) throw new ValidationError("tokenId must be greater than zero.");
     const startedAt = context.now();
     const attempts: SourceAttempt[] = [];
@@ -313,22 +296,14 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
         metadataSources: ["starknet-rpc"],
       };
       relic = await hydrateJson(context, relic, attempts, warnings, options);
-      return toResult(
-        context,
-        startedAt,
-        "starknet-rpc",
-        relic,
-        attempts,
-        options.metadata === "onchain" ? onchainComplete(relic) : metadataComplete(relic),
-        warnings,
-      );
+      return toResult(context, startedAt, "starknet-rpc", relic, attempts, metadataComplete(relic), warnings);
     } catch (error) {
       attempts.push(...transportAttemptsFromError(error));
       throw new AllSourcesFailedError("relics.get", attempts);
     }
   };
 
-  const getMany = async (tokenIds: readonly bigint[], options: RelicRequestOptions = {}) => {
+  const getMany = async (tokenIds: readonly bigint[], options: RequestOptions = {}) => {
     const startedAt = context.now();
     const unique = Array.from(new Set(tokenIds));
     if (unique.length === 0) return toResult(context, startedAt, "derived", [], [], true);
@@ -360,10 +335,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       const missing = chunk.filter((tokenId) => !present.has(tokenId));
       if (missing.length > 0) warnings.push({ code: "MISSING_RELICS", message: `${missing.length} requested relic(s) were not returned.` });
     }
-    const complete = options.metadata === "onchain"
-      ? relics.length === unique.length && relics.every(onchainComplete)
-      : relics.length === unique.length && relics.every(metadataComplete);
-    return toResult(context, startedAt, "starknet-rpc", relics, attempts, complete, warnings);
+    return toResult(context, startedAt, "starknet-rpc", relics, attempts, relics.length === unique.length && relics.every(metadataComplete), warnings);
   };
 
   async function hydrateToriiRelics(
@@ -626,8 +598,8 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       const startedAt = context.now();
       const attempts: SourceAttempt[] = [];
       const warnings: DataWarning[] = [];
-      const size = clampPageSize(input.limit, 20, 20);
-      const metadata = input.metadata ?? "external";
+      const budget = resolveRequestBudget(context.budget, options);
+      const size = clampPageSize(input.limit, 200, Math.min(200, budget.pageSize));
       const cursorState = decodeFeedCursor(input.cursor);
       let toriiReturnedEmpty = false;
 
@@ -636,17 +608,9 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
           ? cursorState.offset
           : 0;
         const toriiLimit = cursorState.kind === "torii"
-          ? Math.min(cursorState.tokenRows, TORII_TOKEN_OFFSET_WINDOW)
-          : TORII_TOKEN_OFFSET_WINDOW;
-        const exceedsToriiWindow = offset >= toriiLimit;
-        if (exceedsToriiWindow) {
-          warnings.push({
-            code: "TORII_PAGINATION_LIMIT",
-            message: "Torii's token query window was exhausted; relic enumeration continued through the aggregate RPC view.",
-            source: "torii",
-          });
-        }
-        if (!exceedsToriiWindow) {
+          ? cursorState.tokenRows
+          : Number.MAX_SAFE_INTEGER;
+        if (offset < toriiLimit) {
           try {
             const response = await context.torii.tokens(
               context.network.contracts.RelicNFT,
@@ -660,12 +624,10 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
             });
             if (toriiItems.length > 0) {
               let items = toriiItems;
-              const needsRpc = metadata === "onchain"
-                ? items.map((relic) => relic.tokenId)
-                : items.filter((relic) => !metadataComplete(relic)).map((relic) => relic.tokenId);
+              const needsRpc = items.filter((relic) => !metadataComplete(relic)).map((relic) => relic.tokenId);
               if (needsRpc.length > 0) {
                 try {
-                  const hydrated = await getMany(needsRpc, { ...options, metadata });
+                  const hydrated = await getMany(needsRpc, options);
                   attempts.push(...hydrated.meta.attempts);
                   warnings.push(...hydrated.meta.warnings);
                   const byId = new Map(hydrated.data.map((relic) => [relic.tokenId.toString(), relic]));
@@ -685,18 +647,15 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
               const oldestTokenId = toriiItems.at(-1)?.tokenId ?? 0n;
               const nextRpcCursor = oldestTokenId > 1n ? oldestTokenId - 1n : 0n;
               const next = hasMore
-                ? nextOffset >= Math.min(tokenRows, TORII_TOKEN_OFFSET_WINDOW)
-                  ? rpcFeedCursor(nextRpcCursor)
-                  : toriiFeedCursor(nextOffset, tokenRows, nextRpcCursor)
+                ? toriiFeedCursor(nextOffset, tokenRows, nextRpcCursor)
                 : 0n;
-              const complete = metadata === "onchain" ? items.every(onchainComplete) : items.every(metadataComplete);
               return toResult(
                 context,
                 startedAt,
                 "torii",
                 { items, cursor: next, hasMore },
                 attempts,
-                complete,
+                items.every(metadataComplete),
                 warnings,
               );
             }
@@ -713,12 +672,13 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
 
       const supported = context.capabilities.has("relicFeed") || await context.capabilities.probe("relicFeed", options.signal);
       if (supported) {
+        const rpcSize = Math.min(size, 20);
         const rpcCursor = cursorState.kind === "torii" || cursorState.kind === "rpc"
           ? cursorState.rpcCursor
           : cursorState.kind === "legacy-torii"
             ? BigInt(cursorState.offset)
             : 0n;
-        const response = await rpcCall(context, "get_relic_feed", [...encodeU256(rpcCursor), size.toString()], options);
+        const response = await rpcCall(context, "get_relic_feed", [...encodeU256(rpcCursor), rpcSize.toString()], options);
         attempts.push(...response.attempts);
         const rows = decodeRelicRowsRpc(response.data);
         if (context.torii && toriiReturnedEmpty && rows.length > 0) {
@@ -728,16 +688,15 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
             source: "torii",
           });
         }
-        const items = await mapConcurrent(rows, context.budget.maxConcurrency, (relic) => hydrateJson(context, relic, attempts, warnings, { ...options, metadata }));
+        const items = await mapConcurrent(rows, context.budget.maxConcurrency, (relic) => hydrateJson(context, relic, attempts, warnings, options));
         const oldest = items.at(-1)?.tokenId ?? 0n;
         const cursor = oldest > 1n ? oldest - 1n : 0n;
-        const hasMore = items.length === size && cursor > 0n;
-        const complete = metadata === "onchain" ? items.every(onchainComplete) : items.every(metadataComplete);
+        const hasMore = items.length === rpcSize && cursor > 0n;
         return toResult(context, startedAt, "starknet-rpc", {
           items,
           cursor: context.torii && hasMore ? rpcFeedCursor(cursor) : cursor,
           hasMore,
-        }, attempts, complete, warnings);
+        }, attempts, items.every(metadataComplete), warnings);
       }
       if (context.torii) {
         warnings.push({
@@ -752,7 +711,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     async collection(input = {}, options = {}) {
       const startedAt = context.now();
       const budget = resolveRequestBudget(context.budget, options);
-      const pageSize = clampPageSize(input.pageSize, Math.min(20, budget.pageSize), 20);
+      const pageSize = clampPageSize(input.pageSize, 200, Math.min(200, budget.pageSize));
       const maxPages = Math.max(budget.maxToriiPages, budget.maxRpcPages);
       const maxItems = Math.max(budget.maxToriiItems, budget.maxRpcItems);
       const relics = new Map<string, Relic>();
@@ -767,7 +726,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       let source: DataSource = "torii";
 
       while (pageCount < maxPages && relics.size < maxItems && !reachedEnd) {
-        const response = await repository.feed({ cursor, limit: pageSize, metadata: "onchain" }, options);
+        const response = await repository.feed({ cursor, limit: pageSize }, options);
         pageCount += 1;
         scannedCount += response.data.items.length;
         complete &&= response.meta.complete;
@@ -804,49 +763,19 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       }
 
       const items = Array.from(relics.values());
-      const fighterIds = Array.from(new Set(items.flatMap((relic) => {
-        const fighterId = relic.metadata?.fighterId;
-        return fighterId && fighterId > 0n ? [fighterId.toString()] : [];
-      }))).map(BigInt);
       const fighters: Fighter[] = [];
-      if (input.enrichFighters !== false && fighterIds.length > 0) {
+      if (input.enrichFighters !== false && context.torii) {
         const fighterRepository = createFightersRepository(context);
-        const wanted = new Set(fighterIds.map(String));
-        const byId = new Map<string, Fighter>();
-        if (context.torii) {
-          let fighterCursor: string | undefined;
-          for (let page = 0; page < budget.maxToriiPages && byId.size < wanted.size; page += 1) {
-            try {
-              const response = await fighterRepository.page({ limit: 20, ...(fighterCursor ? { cursor: fighterCursor } : {}) }, options);
-              attempts.push(...response.meta.attempts);
-              warnings.push(...response.meta.warnings);
-              for (const fighter of response.data.items) {
-                if (wanted.has(fighter.fighterId.toString())) byId.set(fighter.fighterId.toString(), fighter);
-              }
-              if (!response.data.hasMore || !response.data.cursor || response.data.cursor === fighterCursor) break;
-              fighterCursor = response.data.cursor;
-            } catch (error) {
-              attempts.push(...transportAttemptsFromError(error));
-              warnings.push({ code: "TORII_FIGHTER_ENRICHMENT_FAILED", message: "Fighter names could not be fully enumerated through Torii.", source: "torii" });
-              break;
-            }
-          }
+        try {
+          const response = await fighterRepository.all({}, options);
+          attempts.push(...response.meta.attempts);
+          warnings.push(...response.meta.warnings);
+          fighters.push(...response.data.sort((a, b) => a.name.localeCompare(b.name)));
+          complete &&= response.meta.complete;
+        } catch (error) {
+          attempts.push(...transportAttemptsFromError(error));
+          warnings.push({ code: "TORII_FIGHTER_ENRICHMENT_FAILED", message: "Fighter names could not be enumerated through Torii.", source: "torii" });
         }
-
-        const missing = fighterIds.filter((fighterId) => !byId.has(fighterId.toString()));
-        if (missing.length > 0) {
-          try {
-            const response = await fighterRepository.getMany(missing, options);
-            attempts.push(...response.meta.attempts);
-            warnings.push(...response.meta.warnings);
-            for (const fighter of response.data) byId.set(fighter.fighterId.toString(), fighter);
-          } catch (error) {
-            attempts.push(...transportAttemptsFromError(error));
-            warnings.push({ code: "FIGHTER_ENRICHMENT_FAILED", message: `${missing.length} relic fighter record(s) could not be hydrated.`, source: "starknet-rpc" });
-          }
-        }
-        fighters.push(...Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name)));
-        if (byId.size < wanted.size) complete = false;
       }
 
       return toResult(context, startedAt, source, { items, fighters, scannedCount, pageCount }, attempts, complete, warnings);
@@ -924,9 +853,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
         throw new AllSourcesFailedError("relics.owned", [...attempts, ...transportAttemptsFromError(error)]);
       }
     },
-    metadata(tokenId, options = {}) {
-      return get(tokenId, { ...options, metadata: "external" });
-    },
+    metadata: get,
     async owner(tokenId, options = {}) {
       const startedAt = context.now();
       const response = await rpcCall(context, "owner_of", encodeU256(tokenId), options);

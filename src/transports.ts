@@ -1,5 +1,5 @@
 import { errorCode, withTimeout } from "./core.js";
-import { normalizeAddress, normalizeFelt, selectorFromName } from "./codecs.js";
+import { normalizeAddress, normalizeFelt, redactUrl, selectorFromName } from "./codecs.js";
 import { ConfigurationError, TransportError, ValidationError } from "./errors.js";
 import type { Address, DataSource, Felt, RequestOptions, SdkLogger, SourceAttempt } from "./types.js";
 
@@ -88,6 +88,7 @@ interface HttpOptions {
   maxConcurrency?: number;
   maxRetries?: number;
   retryBaseDelayMs?: number;
+  endpointRole?: "direct" | "primary" | "fallback";
 }
 
 interface HttpRpcOptions extends HttpOptions {
@@ -188,9 +189,16 @@ function transportDiagnosticCode(error: unknown): string {
   return errorCode(error);
 }
 
-function transportLogContext(method: string, error: TransportError): Readonly<Record<string, unknown>> {
+function transportLogContext(
+  method: string,
+  error: TransportError,
+  endpoint: string,
+  endpointRole: "direct" | "primary" | "fallback",
+): Readonly<Record<string, unknown>> {
   return {
     method,
+    endpoint: redactUrl(endpoint),
+    endpointRole,
     errorCode: transportDiagnosticCode(error),
     ...(error.status === undefined ? {} : { status: error.status }),
     ...(error.rpcCode === undefined ? {} : { rpcCode: error.rpcCode }),
@@ -235,6 +243,7 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
   const maxConcurrency = options.maxConcurrency ?? 8;
   const maxRetries = options.maxRetries ?? 2;
   const retryBaseDelayMs = options.retryBaseDelayMs ?? 500;
+  const endpointRole = options.endpointRole ?? "direct";
   if (!Number.isSafeInteger(maxConcurrency) || maxConcurrency <= 0) {
     throw new ConfigurationError("RPC maxConcurrency must be a positive safe integer.");
   }
@@ -311,7 +320,7 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
         ? cause
         : new TransportError("starknet-rpc", `RPC request failed (${transportCode}).`, { cause, transportCode });
       if (transportDiagnosticCode(transportError) !== "ABORTED") {
-        options.logger?.warn?.("Cage Calls RPC request failed.", transportLogContext(method, transportError));
+        options.logger?.warn?.("Cage Calls RPC request failed.", transportLogContext(method, transportError, endpoint, endpointRole));
       }
       Object.defineProperty(transportError, "attempts", {
         value: [...retryAttempts, attempt("starknet-rpc", method, requestStartedAt, false, {
@@ -373,6 +382,7 @@ export function createFallbackRpcTransport(options: {
   const primaryUrl = options.primaryUrl ? validateHttpUrl(options.primaryUrl, "Primary RPC URL") : undefined;
   const fallback = createHttpRpcTransport({
     url: fallbackUrl,
+    endpointRole: "fallback",
     ...(options.fetch ? { fetch: options.fetch } : {}),
     ...(options.headers ? { headers: options.headers } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
@@ -384,6 +394,7 @@ export function createFallbackRpcTransport(options: {
   const primary = primaryUrl && primaryUrl !== fallbackUrl
     ? createHttpRpcTransport({
         url: primaryUrl,
+        endpointRole: "primary",
         ...(options.fetch ? { fetch: options.fetch } : {}),
         ...(options.headers ? { headers: options.headers } : {}),
         ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
@@ -401,6 +412,9 @@ export function createFallbackRpcTransport(options: {
       if (requestOptions?.signal?.aborted || transportDiagnosticCode(primaryError) === "ABORTED") throw primaryError;
       options.logger?.warn?.("Cage Calls RPC fallback selected.", {
         method,
+        primaryEndpoint: redactUrl(primaryUrl ?? fallbackUrl),
+        fallbackEndpoint: redactUrl(fallbackUrl),
+        selectedRole: "fallback",
         errorCode: transportDiagnosticCode(primaryError),
         ...(primaryError instanceof TransportError && primaryError.status !== undefined ? { status: primaryError.status } : {}),
         ...(primaryError instanceof TransportError && primaryError.rpcCode !== undefined ? { rpcCode: primaryError.rpcCode } : {}),

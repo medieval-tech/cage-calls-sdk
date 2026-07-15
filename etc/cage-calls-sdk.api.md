@@ -1131,10 +1131,8 @@ export interface FightWinner {
     winner: Address;
 }
 
-// Warning: (ae-forgotten-export) The symbol "MetadataRelic" needs to be exported by the entry point index.d.ts
-//
-// @public
-export function filterRelicCollection(relics: readonly Relic[], filter?: RelicStatsFilter): MetadataRelic[];
+// @public (undocumented)
+export function filterRelicCollection(relics: readonly Relic[], filter?: RelicStatsFilter, fighters?: readonly Fighter[]): Relic[];
 
 // @public (undocumented)
 export interface GachaPoolState {
@@ -1702,6 +1700,8 @@ export interface RelicCollectionStats {
     coverage: {
         inventoryCount: number;
         metadataCount: number;
+        indexedMetadataCount: number;
+        rpcHydratedCount: number;
         selectedCount: number;
         missingMetadata: number;
         missingDefinitionIds: number;
@@ -1719,13 +1719,14 @@ export interface RelicCollectionStats {
 }
 
 // @public (undocumented)
+export function relicDefinitionKey(relic: Relic, fighters?: readonly Fighter[]): string;
+
+// @public (undocumented)
 export interface RelicFeedInput {
     // (undocumented)
     cursor?: bigint;
     // (undocumented)
     limit?: number;
-    // (undocumented)
-    metadata?: RelicMetadataMode;
 }
 
 // @public (undocumented)
@@ -1801,9 +1802,6 @@ export interface RelicMetadataAttribute {
 }
 
 // @public (undocumented)
-export type RelicMetadataMode = "external" | "onchain";
-
-// @public (undocumented)
 export function relicMoveTypeLabel(value: string): string;
 
 // @public (undocumented)
@@ -1828,12 +1826,6 @@ export type RelicRarityTier = "common" | "rare" | "mythic" | "shiny";
 export function relicRarityTier(rarity: number): RelicRarityTier;
 
 // @public (undocumented)
-export interface RelicRequestOptions extends RequestOptions {
-    // (undocumented)
-    metadata?: RelicMetadataMode;
-}
-
-// @public (undocumented)
 export interface RelicsRepository {
     // (undocumented)
     all(input?: RelicCollectionInput, options?: RequestOptions): Promise<DataResult<Relic[]>>;
@@ -1842,9 +1834,9 @@ export interface RelicsRepository {
     // @deprecated (undocumented)
     feed(input?: RelicFeedInput, options?: RequestOptions): Promise<DataResult<Page<Relic, bigint>>>;
     // (undocumented)
-    get(tokenId: bigint, options?: RelicRequestOptions): Promise<DataResult<Relic>>;
+    get(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Relic>>;
     // (undocumented)
-    getMany(tokenIds: readonly bigint[], options?: RelicRequestOptions): Promise<DataResult<Relic[]>>;
+    getMany(tokenIds: readonly bigint[], options?: RequestOptions): Promise<DataResult<Relic[]>>;
     // (undocumented)
     metadata(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Relic>>;
     // (undocumented)
@@ -1896,8 +1888,9 @@ export interface RelicStatsBreakdown<Key extends string | number | bigint = stri
 export interface RelicStatsFacets {
     // (undocumented)
     fighters: Array<{
-        fighterId: bigint;
+        fighterKey: string;
         label: string;
+        fighterId?: bigint;
         fighter?: Fighter;
     }>;
     // (undocumented)
@@ -1917,8 +1910,10 @@ export interface RelicStatsFacets {
 
 // @public (undocumented)
 export interface RelicStatsFilter {
-    // (undocumented)
+    // @deprecated (undocumented)
     fighterIds?: readonly bigint[];
+    // (undocumented)
+    fighterKeys?: readonly string[];
     // (undocumented)
     fightIds?: readonly bigint[];
     // (undocumented)
@@ -1938,7 +1933,7 @@ export interface RelicStatsView {
     // (undocumented)
     byFight: RelicStatsBreakdown<bigint>[];
     // (undocumented)
-    byFighter: RelicStatsBreakdown<bigint>[];
+    byFighter: RelicStatsBreakdown<string>[];
     // (undocumented)
     byMoveType: RelicStatsBreakdown<string>[];
     // (undocumented)

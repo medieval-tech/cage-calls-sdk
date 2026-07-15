@@ -4,7 +4,7 @@ Framework-neutral TypeScript access to Cage Calls deployments. The core package 
 decoding, source fallbacks, validation, aggregation, and typed live-update boundaries. It never
 owns a wallet, constructs a transaction, signs a transaction, or waits for a receipt.
 
-> Status: `0.2.0-next.0`. The API and deployment presets are canary-grade until the production
+> Status: `0.2.0-next.1`. The API and deployment presets are canary-grade until the production
 > client migration and network smoke tests are complete.
 
 ## Install
@@ -139,19 +139,18 @@ otherwise the repository uses bounded owner-filtered contract views over Starkne
 `createIpfsMetadataTransport` tries configured gateways in order and hydrates only incomplete
 metadata. Full authenticated RPC URLs are excluded from logs and errors.
 
-Relic feeds query Torii first and fall back to the aggregate contract view when Torii is empty
-or unavailable. Use `metadata: "onchain"` while enumerating an inventory to avoid IPFS traffic,
-then request the visible token page with the default `metadata: "external"` mode:
+Relic feeds query Torii first and fall back to the aggregate contract view only when Torii is
+empty or unavailable. Complete indexed rows are returned as-is. RPC and IPFS hydration are
+automatic and selective: only token IDs whose indexed metadata is incomplete are hydrated.
+Callers do not select a metadata source or need a second visible-page request:
 
 ```ts
-const inventory = await client.relics.feed({ limit: 20, metadata: "onchain" });
-const visible = await client.relics.getMany(
-  inventory.data.items.slice(0, 20).map((relic) => relic.tokenId),
-);
+const inventory = await client.relics.collection({ pageSize: 200 });
+const visible = inventory.data.items.slice(0, 20);
 ```
 
-For collection-wide analysis, `relics.collection()` traverses every available page with onchain
-metadata and enriches referenced fighters. `relics.stats()` adds ready-made minted-edition and
+For collection-wide analysis, `relics.collection()` traverses every indexed page without an
+arbitrary 1,000-token cutoff and enriches fighters from Torii. `relics.stats()` adds ready-made minted-edition and
 unique-definition views, while the pure helpers keep custom dashboards and export scripts free
 to recompute or extend the same data:
 
@@ -162,13 +161,13 @@ import {
 } from "@medieval-tech/cage-calls-sdk";
 
 const collection = await client.relics.collection();
-const filter = { fighterIds: [42n], rarityTiers: ["common"] as const };
+const filter = { fighterKeys: ["jordan_rank"], rarityTiers: ["common"] as const };
 const summary = summarizeRelicCollection(
   collection.data.items,
   filter,
   collection.data.fighters,
 );
-const matchingTokens = filterRelicCollection(collection.data.items, filter);
+const matchingTokens = filterRelicCollection(collection.data.items, filter, collection.data.fighters);
 
 console.log(summary.minted.byMoveType);
 console.log(summary.definitions.byRarityLevel);
