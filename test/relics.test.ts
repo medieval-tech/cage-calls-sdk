@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createCageCallsClient, MAINNET_PRESET, SEPOLIA_DEV_PRESET } from "../src/index.js";
 import {
@@ -11,6 +11,69 @@ import { encodeOwnedPage, encodeRelicRows, toriiToken } from "./fixtures.js";
 const owner = "0x123" as const;
 
 describe("relic ownership source policy", () => {
+  it("uses the aggregate RPC fallback when Torii inventory is unexpectedly empty", async () => {
+    const rpc = createMockRpcTransport({
+      calls: { get_relic_feed: encodeRelicRows([{ tokenId: 2n, owner }, { tokenId: 1n, owner }]) },
+    });
+    const torii = createMockToriiTransport({ tokens: { totalCount: 0, edges: [] } });
+    const upgraded = {
+      ...SEPOLIA_DEV_PRESET,
+      capabilities: { ...SEPOLIA_DEV_PRESET.capabilities, relicFeed: true },
+    };
+    const client = createCageCallsClient({ network: upgraded, transports: { rpc, torii } });
+
+    const response = await client.relics.feed({ limit: 2, metadata: "onchain" });
+
+    expect(response.meta.source).toBe("starknet-rpc");
+    expect(response.data.items.map((relic) => relic.tokenId)).toEqual([2n, 1n]);
+    expect(response.meta.complete).toBe(true);
+    expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_INVENTORY_EMPTY");
+  });
+
+  it("does not request external metadata in onchain-only feed mode", async () => {
+    const rpc = createMockRpcTransport({
+      calls: { get_relic_feed: encodeRelicRows([{ tokenId: 1n, owner }]) },
+    });
+    const metadata = createMockMetadataTransport({
+      "ipfs://metadata-1": { name: "External", image: "ipfs://image", attributes: [] },
+    });
+    const getJson = vi.spyOn(metadata, "getJson");
+    const upgraded = {
+      ...SEPOLIA_DEV_PRESET,
+      capabilities: { ...SEPOLIA_DEV_PRESET.capabilities, relicFeed: true },
+    };
+    const client = createCageCallsClient({ network: upgraded, transports: { rpc, metadata } });
+
+    const response = await client.relics.feed({ limit: 1, metadata: "onchain" });
+
+    expect(response.data.items[0]?.metadata?.fightId).toBe(10n);
+    expect(response.meta.complete).toBe(true);
+    expect(getJson).not.toHaveBeenCalled();
+  });
+
+  it("enumerates with Torii first and batch-enriches structured onchain data", async () => {
+    const rpc = createMockRpcTransport({
+      calls: { get_relics: encodeRelicRows([{ tokenId: 1n, owner }]) },
+    });
+    const torii = createMockToriiTransport({
+      tokens: {
+        totalCount: 1,
+        edges: [{ node: { tokenMetadata: toriiToken(1n, SEPOLIA_DEV_PRESET.contracts.RelicNFT) } }],
+      },
+    });
+    const upgraded = {
+      ...SEPOLIA_DEV_PRESET,
+      capabilities: { ...SEPOLIA_DEV_PRESET.capabilities, relicFeed: true, relicBatch: true },
+    };
+    const client = createCageCallsClient({ network: upgraded, transports: { rpc, torii } });
+
+    const response = await client.relics.feed({ limit: 1, metadata: "onchain" });
+
+    expect(response.meta.source).toBe("torii");
+    expect(response.data.items[0]?.metadata?.fightId).toBe(10n);
+    expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["get_relics"]);
+  });
+
   it("trusts known-disabled preset capabilities without probing missing entrypoints", async () => {
     const rpc = createMockRpcTransport();
     const torii = createMockToriiTransport({
@@ -24,6 +87,19 @@ describe("relic ownership source policy", () => {
     const response = await client.relics.feed({ limit: 1 });
 
     expect(response.data.items).toHaveLength(1);
+    expect(rpc.calls).toEqual([]);
+  });
+
+  it("marks an empty Torii inventory unverified when no aggregate fallback is deployed", async () => {
+    const rpc = createMockRpcTransport();
+    const torii = createMockToriiTransport({ tokens: { totalCount: 0, edges: [] } });
+    const client = createCageCallsClient({ network: "mainnet", transports: { rpc, torii } });
+
+    const response = await client.relics.feed({ metadata: "onchain" });
+
+    expect(response.data.items).toEqual([]);
+    expect(response.meta.complete).toBe(false);
+    expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_INVENTORY_UNVERIFIED");
     expect(rpc.calls).toEqual([]);
   });
 

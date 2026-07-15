@@ -1,4 +1,5 @@
 import { normalizeAddress } from "./codecs.js";
+import type { RelicFeedInput } from "./relics.js";
 import type { Address, CageCallsQueryKey } from "./types.js";
 
 const key = (scope: string, ...values: readonly unknown[]): CageCallsQueryKey => ["cage-calls", scope, ...values];
@@ -16,7 +17,7 @@ export const cageCallsQueryKeys = Object.freeze({
   portfolio: (account: Address, input?: { limit?: number; cursor?: string }) => key("portfolio", normalizeAddress(account), input?.limit ?? "default", input?.cursor ?? "start"),
   markets: (input?: { limit?: number; cursor?: string }) => key("markets", input?.limit ?? "default", input?.cursor ?? "start"),
   market: (marketId: bigint) => key("market", marketId.toString()),
-  relics: (input?: { limit?: number; cursor?: bigint }) => key("relics", input?.limit ?? "default", input?.cursor?.toString() ?? "start"),
+  relics: (input?: RelicFeedInput) => key("relics", input?.limit ?? "default", input?.cursor?.toString() ?? "start", input?.metadata ?? "external"),
   relicsMany: (tokenIds: readonly bigint[]) => key("relics", "many", ...tokenIds.map(String)),
   relic: (tokenId: bigint) => key("relic", tokenId.toString()),
   ownedRelics: (account: Address) => key("owned-relics", normalizeAddress(account)),

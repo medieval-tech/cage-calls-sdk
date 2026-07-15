@@ -299,10 +299,7 @@ export const cageCallsQueryKeys: Readonly<{
         cursor?: string;
     }) => readonly ["cage-calls", string, ...unknown[]];
     market: (marketId: bigint) => readonly ["cage-calls", string, ...unknown[]];
-    relics: (input?: {
-        limit?: number;
-        cursor?: bigint;
-    }) => readonly ["cage-calls", string, ...unknown[]];
+    relics: (input?: RelicFeedInput) => readonly ["cage-calls", string, ...unknown[]];
     relicsMany: (tokenIds: readonly bigint[]) => readonly ["cage-calls", string, ...unknown[]];
     relic: (tokenId: bigint) => readonly ["cage-calls", string, ...unknown[]];
     ownedRelics: (account: Address) => readonly ["cage-calls", string, ...unknown[]];
@@ -1429,6 +1426,16 @@ export interface Relic {
 }
 
 // @public (undocumented)
+export interface RelicFeedInput {
+    // (undocumented)
+    cursor?: bigint;
+    // (undocumented)
+    limit?: number;
+    // (undocumented)
+    metadata?: RelicMetadataMode;
+}
+
+// @public (undocumented)
 export interface RelicMetadata {
     // (undocumented)
     category: number;
@@ -1501,6 +1508,9 @@ export interface RelicMetadataAttribute {
 }
 
 // @public (undocumented)
+export type RelicMetadataMode = "external" | "onchain";
+
+// @public (undocumented)
 export interface RelicOwnershipProvenance {
     // (undocumented)
     onchainBalance: bigint;
@@ -1513,16 +1523,19 @@ export interface RelicOwnershipProvenance {
 }
 
 // @public (undocumented)
+export interface RelicRequestOptions extends RequestOptions {
+    // (undocumented)
+    metadata?: RelicMetadataMode;
+}
+
+// @public (undocumented)
 export interface RelicsRepository {
     // (undocumented)
-    feed(input?: {
-        limit?: number;
-        cursor?: bigint;
-    }, options?: RequestOptions): Promise<DataResult<Page<Relic, bigint>>>;
+    feed(input?: RelicFeedInput, options?: RequestOptions): Promise<DataResult<Page<Relic, bigint>>>;
     // (undocumented)
-    get(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Relic>>;
+    get(tokenId: bigint, options?: RelicRequestOptions): Promise<DataResult<Relic>>;
     // (undocumented)
-    getMany(tokenIds: readonly bigint[], options?: RequestOptions): Promise<DataResult<Relic[]>>;
+    getMany(tokenIds: readonly bigint[], options?: RelicRequestOptions): Promise<DataResult<Relic[]>>;
     // (undocumented)
     metadata(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Relic>>;
     // (undocumented)

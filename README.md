@@ -4,7 +4,7 @@ Framework-neutral TypeScript access to Cage Calls deployments. The core package 
 decoding, source fallbacks, validation, and typed call construction. It never owns a wallet,
 signs a transaction, or waits for a receipt.
 
-> Status: `0.1.0-next.6`. The API and deployment presets are canary-grade until the production
+> Status: `0.1.0-next.9`. The API and deployment presets are canary-grade until the production
 > client migration and network smoke tests are complete.
 
 ## Install
@@ -115,6 +115,22 @@ Relic ownership is verified against the onchain balance. Complete Torii results 
 otherwise the repository uses bounded owner-filtered contract views over Starknet RPC.
 `createIpfsMetadataTransport` tries configured gateways in order and hydrates only incomplete
 metadata. Full authenticated RPC URLs are excluded from logs and errors.
+
+Relic feeds query Torii first and fall back to the aggregate contract view when Torii is empty
+or unavailable. Use `metadata: "onchain"` while enumerating an inventory to avoid IPFS traffic,
+then request the visible token page with the default `metadata: "external"` mode:
+
+```ts
+const inventory = await client.relics.feed({ limit: 20, metadata: "onchain" });
+const visible = await client.relics.getMany(
+  inventory.data.items.slice(0, 20).map((relic) => relic.tokenId),
+);
+```
+
+Run `pnpm check:relic-parity` to compare each preset's onchain minted supply with Torii. Pass one
+or more network names to narrow the check. Authenticated RPC overrides are supported through
+`CAGE_CALLS_MAINNET_RPC_URL`, `CAGE_CALLS_SEPOLIA_DEV_RPC_URL`, and
+`CAGE_CALLS_SEPOLIA_STAGING_RPC_URL`.
 
 Alchemy endpoints are supported as ordinary Starknet JSON-RPC providers. The SDK does not use
 Alchemy's dedicated NFT API because it does not support the Cage Calls Starknet mainnet flow.

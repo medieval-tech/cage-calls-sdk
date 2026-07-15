@@ -1,6 +1,6 @@
 {
   "name": "@medieval-tech/cage-calls-sdk",
-  "version": "0.1.0-next.8",
+  "version": "0.1.0-next.9",
   "description": "Framework-neutral TypeScript SDK for Cage Calls",
   "license": "MIT",
   "type": "module",
@@ -65,6 +65,7 @@
     "check": "pnpm generate:check && pnpm typecheck && pnpm test && pnpm build && pnpm check:runtimes && pnpm api:check && pnpm check:core-boundary && pnpm check:bundle",
     "check:bundle": "node scripts/check-bundle.mjs",
     "check:core-boundary": "node scripts/check-core-boundary.mjs",
+    "check:relic-parity": "pnpm build && node scripts/check-relic-parity.mjs",
     "check:runtimes": "pnpm check:node && pnpm check:ssr && pnpm check:vite && pnpm check:capacitor",
     "check:node": "node examples/node.mjs",
     "check:ssr": "node examples/ssr.mjs",

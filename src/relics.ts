@@ -35,10 +35,22 @@ export interface OwnedRelicsPage extends Page<Relic> {
   provenance: RelicOwnershipProvenance;
 }
 
+export type RelicMetadataMode = "external" | "onchain";
+
+export interface RelicRequestOptions extends RequestOptions {
+  metadata?: RelicMetadataMode;
+}
+
+export interface RelicFeedInput {
+  limit?: number;
+  cursor?: bigint;
+  metadata?: RelicMetadataMode;
+}
+
 export interface RelicsRepository {
-  get(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Relic>>;
-  getMany(tokenIds: readonly bigint[], options?: RequestOptions): Promise<DataResult<Relic[]>>;
-  feed(input?: { limit?: number; cursor?: bigint }, options?: RequestOptions): Promise<DataResult<Page<Relic, bigint>>>;
+  get(tokenId: bigint, options?: RelicRequestOptions): Promise<DataResult<Relic>>;
+  getMany(tokenIds: readonly bigint[], options?: RelicRequestOptions): Promise<DataResult<Relic[]>>;
+  feed(input?: RelicFeedInput, options?: RequestOptions): Promise<DataResult<Page<Relic, bigint>>>;
   owned(owner: Address, options?: RequestOptions): Promise<DataResult<OwnedRelicsPage>>;
   metadata(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Relic>>;
   owner(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Address>>;
@@ -111,6 +123,10 @@ function metadataComplete(relic: Relic): boolean {
   return Boolean(relic.name && (relic.image || relic.animationUrl) && relic.attributes.length > 0);
 }
 
+function onchainComplete(relic: Relic): boolean {
+  return Boolean(relic.owner && relic.metadata);
+}
+
 function onchainAttributes(relic: Relic): RelicMetadataAttribute[] {
   const metadata = relic.metadata;
   if (!metadata) return [];
@@ -160,7 +176,11 @@ async function rpcCall(context: RelicContext, entrypoint: string, calldata: stri
   return context.rpc.call({ contractAddress: context.network.contracts.RelicNFT, entrypoint, calldata }, options);
 }
 
-async function hydrateJson(context: RelicContext, relic: Relic, attempts: SourceAttempt[], warnings: DataWarning[], options: RequestOptions): Promise<Relic> {
+async function hydrateJson(context: RelicContext, relic: Relic, attempts: SourceAttempt[], warnings: DataWarning[], options: RelicRequestOptions): Promise<Relic> {
+  if (options.metadata === "onchain") {
+    const attributes = relic.attributes.length > 0 ? relic.attributes : onchainAttributes(relic);
+    return { ...relic, attributes };
+  }
   if (!context.metadata || !relic.tokenUri) {
     const attributes = relic.attributes.length > 0 ? relic.attributes : onchainAttributes(relic);
     return { ...relic, attributes };
@@ -181,7 +201,7 @@ async function hydrateJson(context: RelicContext, relic: Relic, attempts: Source
 }
 
 export function createRelicsRepository(context: RelicContext): RelicsRepository {
-  const get = async (tokenId: bigint, options: RequestOptions = {}) => {
+  const get = async (tokenId: bigint, options: RelicRequestOptions = {}) => {
     if (tokenId <= 0n) throw new ValidationError("tokenId must be greater than zero.");
     const startedAt = context.now();
     const attempts: SourceAttempt[] = [];
@@ -210,14 +230,22 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
         metadataSources: ["starknet-rpc"],
       };
       relic = await hydrateJson(context, relic, attempts, warnings, options);
-      return toResult(context, startedAt, "starknet-rpc", relic, attempts, metadataComplete(relic), warnings);
+      return toResult(
+        context,
+        startedAt,
+        "starknet-rpc",
+        relic,
+        attempts,
+        options.metadata === "onchain" ? onchainComplete(relic) : metadataComplete(relic),
+        warnings,
+      );
     } catch (error) {
       attempts.push(...transportAttemptsFromError(error));
       throw new AllSourcesFailedError("relics.get", attempts);
     }
   };
 
-  const getMany = async (tokenIds: readonly bigint[], options: RequestOptions = {}) => {
+  const getMany = async (tokenIds: readonly bigint[], options: RelicRequestOptions = {}) => {
     const startedAt = context.now();
     const unique = Array.from(new Set(tokenIds));
     if (unique.length === 0) return toResult(context, startedAt, "derived", [], [], true);
@@ -249,7 +277,10 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       const missing = chunk.filter((tokenId) => !present.has(tokenId));
       if (missing.length > 0) warnings.push({ code: "MISSING_RELICS", message: `${missing.length} requested relic(s) were not returned.` });
     }
-    return toResult(context, startedAt, "starknet-rpc", relics, attempts, relics.length === unique.length && relics.every(metadataComplete), warnings);
+    const complete = options.metadata === "onchain"
+      ? relics.length === unique.length && relics.every(onchainComplete)
+      : relics.length === unique.length && relics.every(metadataComplete);
+    return toResult(context, startedAt, "starknet-rpc", relics, attempts, complete, warnings);
   };
 
   async function hydrateToriiRelics(
@@ -428,27 +459,84 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       const attempts: SourceAttempt[] = [];
       const warnings: DataWarning[] = [];
       const size = clampPageSize(input.limit, 20, 20);
+      const metadata = input.metadata ?? "external";
+
+      if (context.torii) {
+        try {
+          const offset = Number(input.cursor ?? 0n);
+          if (!Number.isSafeInteger(offset)) throw new ValidationError("Relic feed cursor is too large.");
+          const response = await context.torii.tokens(context.network.contracts.RelicNFT, { offset, limit: size }, options);
+          attempts.push(...response.attempts);
+          const toriiItems = response.data.edges.flatMap((edge) => {
+            const mapped = edge.node.tokenMetadata ? mapToriiRelic(edge.node.tokenMetadata, context.network.contracts.RelicNFT) : undefined;
+            return mapped ? [mapped] : [];
+          });
+          if (toriiItems.length > 0) {
+            let items = toriiItems;
+            const needsRpc = metadata === "onchain"
+              ? items.map((relic) => relic.tokenId)
+              : items.filter((relic) => !metadataComplete(relic)).map((relic) => relic.tokenId);
+            if (needsRpc.length > 0) {
+              try {
+                const hydrated = await getMany(needsRpc, { ...options, metadata });
+                attempts.push(...hydrated.meta.attempts);
+                warnings.push(...hydrated.meta.warnings);
+                const byId = new Map(hydrated.data.map((relic) => [relic.tokenId.toString(), relic]));
+                items = items.map((relic) => mergeRelic(relic, byId.get(relic.tokenId.toString()) ?? relic));
+              } catch (error) {
+                attempts.push(...transportAttemptsFromError(error));
+                warnings.push({
+                  code: "TORII_RELIC_ENRICHMENT_FAILED",
+                  message: "Torii relic inventory was available, but structured onchain data could not be enriched through RPC.",
+                  source: "starknet-rpc",
+                });
+              }
+            }
+            const next = BigInt(offset + response.data.edges.length);
+            const complete = metadata === "onchain" ? items.every(onchainComplete) : items.every(metadataComplete);
+            return toResult(
+              context,
+              startedAt,
+              "torii",
+              { items, cursor: next, hasMore: Number(next) < response.data.totalCount },
+              attempts,
+              complete,
+              warnings,
+            );
+          }
+        } catch (error) {
+          attempts.push(...transportAttemptsFromError(error));
+          warnings.push({ code: "TORII_UNAVAILABLE", message: "Torii relic inventory lookup failed.", source: "torii" });
+        }
+      }
+
       const supported = context.capabilities.has("relicFeed") || await context.capabilities.probe("relicFeed", options.signal);
       if (supported) {
         const response = await rpcCall(context, "get_relic_feed", [...encodeU256(input.cursor ?? 0n), size.toString()], options);
         attempts.push(...response.attempts);
         const rows = decodeRelicRowsRpc(response.data);
-        const items = await mapConcurrent(rows, context.budget.maxConcurrency, (relic) => hydrateJson(context, relic, attempts, warnings, options));
+        if (context.torii && rows.length > 0) {
+          warnings.push({
+            code: "TORII_INVENTORY_EMPTY",
+            message: "Torii returned no RelicNFT inventory even though the contract returned relics.",
+            source: "torii",
+          });
+        }
+        const items = await mapConcurrent(rows, context.budget.maxConcurrency, (relic) => hydrateJson(context, relic, attempts, warnings, { ...options, metadata }));
         const oldest = items.at(-1)?.tokenId ?? 0n;
         const cursor = oldest > 1n ? oldest - 1n : 0n;
-        return toResult(context, startedAt, "starknet-rpc", { items, cursor, hasMore: items.length === size && cursor > 0n }, attempts, items.every(metadataComplete), warnings);
+        const complete = metadata === "onchain" ? items.every(onchainComplete) : items.every(metadataComplete);
+        return toResult(context, startedAt, "starknet-rpc", { items, cursor, hasMore: items.length === size && cursor > 0n }, attempts, complete, warnings);
       }
-      if (!context.torii) throw new UnsupportedCapabilityError("relic feed enumeration");
-      const offset = Number(input.cursor ?? 0n);
-      if (!Number.isSafeInteger(offset)) throw new ValidationError("Relic feed cursor is too large.");
-      const response = await context.torii.tokens(context.network.contracts.RelicNFT, { offset, limit: size }, options);
-      attempts.push(...response.attempts);
-      const items = response.data.edges.flatMap((edge) => {
-        const mapped = edge.node.tokenMetadata ? mapToriiRelic(edge.node.tokenMetadata, context.network.contracts.RelicNFT) : undefined;
-        return mapped ? [mapped] : [];
-      });
-      const next = BigInt(offset + response.data.edges.length);
-      return toResult(context, startedAt, "torii", { items, cursor: next, hasMore: Number(next) < response.data.totalCount }, attempts, items.every(metadataComplete), warnings);
+      if (context.torii) {
+        warnings.push({
+          code: "TORII_INVENTORY_UNVERIFIED",
+          message: "Torii returned no RelicNFT inventory and this deployment lacks the aggregate RPC fallback.",
+          source: "torii",
+        });
+        return toResult(context, startedAt, "torii", { items: [], cursor: input.cursor ?? 0n, hasMore: false }, attempts, false, warnings);
+      }
+      throw new UnsupportedCapabilityError("relic feed enumeration");
     },
     async owned(ownerInput, options = {}) {
       const owner = normalizeAddress(ownerInput);
@@ -509,7 +597,9 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
         throw new AllSourcesFailedError("relics.owned", [...attempts, ...transportAttemptsFromError(error)]);
       }
     },
-    metadata: get,
+    metadata(tokenId, options = {}) {
+      return get(tokenId, { ...options, metadata: "external" });
+    },
     async owner(tokenId, options = {}) {
       const startedAt = context.now();
       const response = await rpcCall(context, "owner_of", encodeU256(tokenId), options);

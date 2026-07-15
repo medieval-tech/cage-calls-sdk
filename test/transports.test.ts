@@ -4,6 +4,7 @@ import {
   createCageCallsClient,
   createFallbackRpcTransport,
   createHttpRpcTransport,
+  createIpfsMetadataTransport,
   createToriiGraphqlTransport,
   TransportError,
   type RpcTransport,
@@ -15,6 +16,26 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 });
 
 describe("RPC transports", () => {
+  it("logs one summarized warning after every IPFS gateway fails", async () => {
+    const logger = { warn: vi.fn() };
+    const fetch = vi.fn(async () => new Response(null, { status: 503 }));
+    const metadata = createIpfsMetadataTransport({
+      gateways: ["https://one.example/ipfs", "https://two.example/ipfs"],
+      fetch,
+      logger,
+    });
+
+    await expect(metadata.getJson("ipfs://cid/metadata.json")).rejects.toBeInstanceOf(TransportError);
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenCalledOnce();
+    expect(logger.warn).toHaveBeenCalledWith("Cage Calls IPFS metadata request failed.", {
+      uri: "ipfs://cid/metadata.json",
+      gatewayCount: 2,
+      errorCodes: ["TRANSPORT_ERROR"],
+    });
+  });
+
   it("falls back from a failed primary and reports both bounded attempts", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
       const url = String(input);

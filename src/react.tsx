@@ -4,7 +4,7 @@ import { useQuery, type QueryClient, type UseQueryOptions } from "@tanstack/reac
 import type { CageCallsClient } from "./client.js";
 import { normalizeAddress } from "./codecs.js";
 import { cageCallsQueryKeys as keys } from "./queryKeys.js";
-import type { OwnedRelicsPage } from "./relics.js";
+import type { OwnedRelicsPage, RelicFeedInput } from "./relics.js";
 import type {
   Address,
   CageCallsActivity,
@@ -51,7 +51,6 @@ type FightFeedInput = { limit?: number; cursor?: bigint; viewer?: Address };
 type FightEventsInput = FightFeedInput & { now?: bigint };
 type OffsetPageInput = { offset?: number; limit?: number };
 type CursorPageInput = { limit?: number; cursor?: string };
-type RelicFeedInput = { limit?: number; cursor?: bigint };
 type GachaTokensInput = { cursor?: bigint; limit?: number };
 type ActivityInput = { limit?: number; cursor?: string; keys?: string[] };
 

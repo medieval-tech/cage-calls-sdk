@@ -654,6 +654,7 @@ export function createIpfsMetadataTransport(options: { gateways: readonly string
         ? [uri]
         : gateways.map((gateway) => `${gateway}${uri.trim().replace(/^ipfs:\/\/(ipfs\/)?/, "")}`);
       const attempts: SourceAttempt[] = [];
+      const failureCodes = new Set<string>();
       for (let index = 0; index < candidates.length; index += 1) {
         const startedAt = Date.now();
         const timeout = withTimeout(requestOptions.signal, timeoutMs);
@@ -665,17 +666,22 @@ export function createIpfsMetadataTransport(options: { gateways: readonly string
           return { data, attempts };
         } catch (cause) {
           const status = cause instanceof TransportError ? cause.status : undefined;
+          failureCodes.add(errorCode(cause));
           attempts.push(attempt("ipfs", "metadata", startedAt, false, {
             ...(index > 0 ? { fallback: true } : {}),
             ...(status === undefined ? {} : { status }),
             errorCode: errorCode(cause),
           }));
-          options.logger?.warn?.("Cage Calls IPFS gateway failed.", { gatewayIndex: index, errorCode: errorCode(cause) });
           if (requestOptions.signal?.aborted) throw cause;
         } finally {
           timeout.cleanup();
         }
       }
+      options.logger?.warn?.("Cage Calls IPFS metadata request failed.", {
+        uri,
+        gatewayCount: candidates.length,
+        errorCodes: Array.from(failureCodes),
+      });
       const error = new TransportError("ipfs", `All ${candidates.length} IPFS gateways failed.`);
       Object.defineProperty(error, "attempts", { value: attempts });
       throw error;
