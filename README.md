@@ -213,9 +213,9 @@ Presets for `mainnet`, `sepolia-dev`, and `sepolia-staging` are generated from
 upstream smart-contract commit, manifest hash, addresses, class hashes, and deployed capability
 flags. Run `pnpm generate`; CI rejects a stale generated file.
 
-The new relic, fighter, gacha, and oracle views are additive and storage-preserving, but presets
-continue to advertise them as unsupported until a separately authorized deployment updates the
-corresponding manifest.
+The additive, storage-preserving relic, fighter, gacha, and oracle views are live in the Sepolia
+Dev and Staging presets. Mainnet capability flags remain disabled until its separately authorized
+contract migration is published in the corresponding manifest.
 
 ## Development
 

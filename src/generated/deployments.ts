@@ -9,12 +9,12 @@ export const UPSTREAM_DEPLOYMENTS = {
       "sha256": "5a01f7129458756af4dde9981e87ac7d40ef6291441e293d246ce43450e05079"
     },
     "sepolia-dev": {
-      "commit": "3796f13b5fb4a17f4d46be5a7ec1e5fe3818037b",
-      "sha256": "6ef84437a9b2a25f09525bccb10e2bcf811b4829f9c96f0cf2896620aca71894"
+      "commit": "d7ad4bbeeb70af345a4e50818162040c6acfedee",
+      "sha256": "da0d4a4d5e4421391467935a5cb5d24cd456c34d1f8c336e9c64c8ec9fe71daf"
     },
     "sepolia-staging": {
-      "commit": "3796f13b5fb4a17f4d46be5a7ec1e5fe3818037b",
-      "sha256": "822f075d8d8586fb873bfcd007b3ab454c66aa3a456b3f58f70947abc6ae3f40"
+      "commit": "d7ad4bbeeb70af345a4e50818162040c6acfedee",
+      "sha256": "b2131eea1b3fce6d80f8f1fe0596e727bc9ab7040cd7aadd96578910fdae5eac"
     }
   }
 } as const;
@@ -72,7 +72,7 @@ const presets = {
     "preset": "sepolia-dev",
     "chainId": "0x534e5f5345504f4c4941",
     "namespace": "pm",
-    "deploymentRevision": "3796f13b5fb4a17f4d46be5a7ec1e5fe3818037b",
+    "deploymentRevision": "d7ad4bbeeb70af345a4e50818162040c6acfedee",
     "worldAddress": "0x1401498e3b1d0d155d28aac566d878536c9b32e8ff470a944e49e84bee2df62",
     "contracts": {
       "CALLS": "0x41e71cb49fb73a5f543fee74033616eaf867290b0da4613ec4758cca30c5ea",
@@ -95,7 +95,7 @@ const presets = {
       "FighterRegistry": "0x366b6ae2c4709582b47b8d7d21c7ec66eeae252fd03fad3b9e4598be6c60694",
       "Gacha": "0x339c038535f51d5a5196714eb02fdcb666cfef66d9dce9c0704c35989735696",
       "Markets": "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12",
-      "RelicNFT": "0x1ac2ed97de7ea9dc443257190f555f07f0e4b55ed1e0b61efc702dbc84ed42a",
+      "RelicNFT": "0x7fe51e65a2dd5524462717f2d95435130e8a9874492ea74d8add9f20b6b7696",
       "StrikeTickets": "0x6f5d99084de5e581da00408c0d44b9267a695184c346f69780d4ee2d8e9ebde",
       "VaultFees": "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e",
       "VaultPositions": "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730"
@@ -119,7 +119,7 @@ const presets = {
     "preset": "sepolia-staging",
     "chainId": "0x534e5f5345504f4c4941",
     "namespace": "pm",
-    "deploymentRevision": "3796f13b5fb4a17f4d46be5a7ec1e5fe3818037b",
+    "deploymentRevision": "d7ad4bbeeb70af345a4e50818162040c6acfedee",
     "worldAddress": "0x65586aa40bececc31422af9008293dabe6ddedbe091632e9a481ca68657cda5",
     "contracts": {
       "CALLS": "0x34c6b2b62a58f9b0ca8229eb24194e3f7f6e544e4ff900507d5db015a5a9e82",
@@ -142,7 +142,7 @@ const presets = {
       "FighterRegistry": "0x366b6ae2c4709582b47b8d7d21c7ec66eeae252fd03fad3b9e4598be6c60694",
       "Gacha": "0x339c038535f51d5a5196714eb02fdcb666cfef66d9dce9c0704c35989735696",
       "Markets": "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12",
-      "RelicNFT": "0x1ac2ed97de7ea9dc443257190f555f07f0e4b55ed1e0b61efc702dbc84ed42a",
+      "RelicNFT": "0x7fe51e65a2dd5524462717f2d95435130e8a9874492ea74d8add9f20b6b7696",
       "StrikeTickets": "0x6f5d99084de5e581da00408c0d44b9267a695184c346f69780d4ee2d8e9ebde",
       "VaultFees": "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e",
       "VaultPositions": "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730"
