@@ -1,4 +1,5 @@
 import { createDataResult, resolveRequestBudget } from "./core.js";
+import { summarizeAnalyticsSnapshot, type AnalyticsSummaryFilter, type CageCallsAnalyticsSummary } from "./analyticsSummary.js";
 import { encodeU256, normalizeAddress } from "./codecs.js";
 import {
   decodeFightBuysRpc,
@@ -33,6 +34,7 @@ const FIGHT_WINNER_SELECTION = ["fight_id", "winner", "choice_index", "redeemed"
 
 export interface AnalyticsRepository {
   snapshot(options?: RequestOptions): Promise<DataResult<AnalyticsSnapshot>>;
+  summary(filter?: AnalyticsSummaryFilter, options?: RequestOptions): Promise<DataResult<CageCallsAnalyticsSummary>>;
 }
 
 function unavailableRead<T>(model: string, error: unknown): ToriiModelRead<T> {
@@ -73,7 +75,7 @@ function winnerChoices(winners: readonly FightWinner[], warnings: DataWarning[])
 }
 
 export function createAnalyticsRepository(context: RepositoryContext): AnalyticsRepository {
-  return {
+  const repository: AnalyticsRepository = {
     async snapshot(options = {}) {
       const startedAt = context.now();
       const budget = resolveRequestBudget(context.budget, options);
@@ -308,5 +310,21 @@ export function createAnalyticsRepository(context: RepositoryContext): Analytics
         ...(context.logger ? { logger: context.logger } : {}),
       });
     },
+    async summary(filter = {}, options = {}) {
+      const startedAt = context.now();
+      const snapshot = await repository.snapshot(options);
+      return createDataResult({
+        data: summarizeAnalyticsSnapshot(snapshot.data, filter),
+        source: "derived",
+        complete: snapshot.meta.complete,
+        attempts: snapshot.meta.attempts,
+        warnings: snapshot.meta.warnings,
+        startedAt,
+        now: context.now,
+        ...(snapshot.meta.blockNumber === undefined ? {} : { blockNumber: snapshot.meta.blockNumber }),
+        ...(context.logger ? { logger: context.logger } : {}),
+      });
+    },
   };
+  return repository;
 }

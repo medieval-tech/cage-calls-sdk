@@ -1,6 +1,7 @@
 export * from "./activity.js";
 export * from "./admin.js";
 export * from "./analytics.js";
+export * from "./analyticsSummary.js";
 export * from "./calls.js";
 export * from "./client.js";
 export * from "./codecs.js";
@@ -11,6 +12,7 @@ export * from "./generated/entrypoints.js";
 export * from "./network.js";
 export * from "./queryKeys.js";
 export * from "./relics.js";
+export * from "./relicStats.js";
 export * from "./repositories.js";
 export * from "./transports.js";
 export * from "./types.js";

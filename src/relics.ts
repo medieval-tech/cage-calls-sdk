@@ -8,7 +8,8 @@ import {
   decodeSingleU256,
 } from "./decoders.js";
 import { AllSourcesFailedError, UnsupportedCapabilityError, ValidationError } from "./errors.js";
-import type { RepositoryContext } from "./repositories.js";
+import { createFightersRepository, type RepositoryContext } from "./repositories.js";
+import { summarizeRelicCollection, type RelicCollectionStats, type RelicStatsFilter } from "./relicStats.js";
 import type {
   MetadataTransport,
   ToriiTokenNode,
@@ -19,6 +20,7 @@ import type {
   DataResult,
   DataSource,
   DataWarning,
+  Fighter,
   Page,
   Relic,
   RelicMetadataAttribute,
@@ -47,10 +49,24 @@ export interface RelicFeedInput {
   metadata?: RelicMetadataMode;
 }
 
+export interface RelicCollectionInput {
+  pageSize?: number;
+  enrichFighters?: boolean;
+}
+
+export interface RelicCollection {
+  items: Relic[];
+  fighters: Fighter[];
+  scannedCount: number;
+  pageCount: number;
+}
+
 export interface RelicsRepository {
   get(tokenId: bigint, options?: RelicRequestOptions): Promise<DataResult<Relic>>;
   getMany(tokenIds: readonly bigint[], options?: RelicRequestOptions): Promise<DataResult<Relic[]>>;
   feed(input?: RelicFeedInput, options?: RequestOptions): Promise<DataResult<Page<Relic, bigint>>>;
+  collection(input?: RelicCollectionInput, options?: RequestOptions): Promise<DataResult<RelicCollection>>;
+  stats(filter?: RelicStatsFilter, options?: RequestOptions): Promise<DataResult<RelicCollectionStats>>;
   owned(owner: Address, options?: RequestOptions): Promise<DataResult<OwnedRelicsPage>>;
   metadata(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Relic>>;
   owner(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Address>>;
@@ -594,7 +610,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     return verifyToriiInventory(owner, attempts, warnings, options);
   }
 
-  return {
+  const repository: RelicsRepository = {
     get,
     getMany,
     async feed(input = {}, options = {}) {
@@ -724,6 +740,121 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       }
       throw new UnsupportedCapabilityError("relic feed enumeration");
     },
+    async collection(input = {}, options = {}) {
+      const startedAt = context.now();
+      const budget = resolveRequestBudget(context.budget, options);
+      const pageSize = clampPageSize(input.pageSize, Math.min(20, budget.pageSize), 20);
+      const maxPages = Math.max(budget.maxToriiPages, budget.maxRpcPages);
+      const maxItems = Math.max(budget.maxToriiItems, budget.maxRpcItems);
+      const relics = new Map<string, Relic>();
+      const seenCursors = new Set<string>(["0"]);
+      const attempts: SourceAttempt[] = [];
+      const warnings: DataWarning[] = [];
+      let cursor = 0n;
+      let pageCount = 0;
+      let scannedCount = 0;
+      let reachedEnd = false;
+      let complete = true;
+      let source: DataSource = "torii";
+
+      while (pageCount < maxPages && relics.size < maxItems && !reachedEnd) {
+        const response = await repository.feed({ cursor, limit: pageSize, metadata: "onchain" }, options);
+        pageCount += 1;
+        scannedCount += response.data.items.length;
+        complete &&= response.meta.complete;
+        if (response.meta.source === "starknet-rpc") source = "starknet-rpc";
+        attempts.push(...response.meta.attempts);
+        warnings.push(...response.meta.warnings);
+        for (const relic of response.data.items) {
+          if (relics.size >= maxItems) break;
+          relics.set(relic.tokenId.toString(), relic);
+        }
+
+        reachedEnd = !response.data.hasMore || response.data.items.length === 0;
+        const nextCursor = response.data.cursor ?? 0n;
+        const cursorKey = nextCursor.toString();
+        if (!reachedEnd && seenCursors.has(cursorKey)) {
+          complete = false;
+          reachedEnd = true;
+          warnings.push({ code: "RELIC_CURSOR_STALLED", message: `Relic collection pagination stopped at repeated cursor ${nextCursor}.` });
+        } else if (!reachedEnd) {
+          seenCursors.add(cursorKey);
+        }
+        cursor = nextCursor;
+      }
+
+      if (!reachedEnd) {
+        complete = false;
+        warnings.push({
+          code: relics.size >= maxItems ? "RELIC_ITEM_LIMIT_REACHED" : "RELIC_PAGE_LIMIT_REACHED",
+          message: relics.size >= maxItems
+            ? `Relic collection reached the ${maxItems} item budget.`
+            : `Relic collection reached the ${maxPages} page budget.`,
+          source,
+        });
+      }
+
+      const items = Array.from(relics.values());
+      const fighterIds = Array.from(new Set(items.flatMap((relic) => {
+        const fighterId = relic.metadata?.fighterId;
+        return fighterId && fighterId > 0n ? [fighterId.toString()] : [];
+      }))).map(BigInt);
+      const fighters: Fighter[] = [];
+      if (input.enrichFighters !== false && fighterIds.length > 0) {
+        const fighterRepository = createFightersRepository(context);
+        const wanted = new Set(fighterIds.map(String));
+        const byId = new Map<string, Fighter>();
+        if (context.torii) {
+          let fighterCursor: string | undefined;
+          for (let page = 0; page < budget.maxToriiPages && byId.size < wanted.size; page += 1) {
+            try {
+              const response = await fighterRepository.list({ limit: 20, ...(fighterCursor ? { cursor: fighterCursor } : {}) }, options);
+              attempts.push(...response.meta.attempts);
+              warnings.push(...response.meta.warnings);
+              for (const fighter of response.data.items) {
+                if (wanted.has(fighter.fighterId.toString())) byId.set(fighter.fighterId.toString(), fighter);
+              }
+              if (!response.data.hasMore || !response.data.cursor || response.data.cursor === fighterCursor) break;
+              fighterCursor = response.data.cursor;
+            } catch (error) {
+              attempts.push(...transportAttemptsFromError(error));
+              warnings.push({ code: "TORII_FIGHTER_ENRICHMENT_FAILED", message: "Fighter names could not be fully enumerated through Torii.", source: "torii" });
+              break;
+            }
+          }
+        }
+
+        const missing = fighterIds.filter((fighterId) => !byId.has(fighterId.toString()));
+        if (missing.length > 0) {
+          try {
+            const response = await fighterRepository.getMany(missing, options);
+            attempts.push(...response.meta.attempts);
+            warnings.push(...response.meta.warnings);
+            for (const fighter of response.data) byId.set(fighter.fighterId.toString(), fighter);
+          } catch (error) {
+            attempts.push(...transportAttemptsFromError(error));
+            warnings.push({ code: "FIGHTER_ENRICHMENT_FAILED", message: `${missing.length} relic fighter record(s) could not be hydrated.`, source: "starknet-rpc" });
+          }
+        }
+        fighters.push(...Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name)));
+      }
+
+      return toResult(context, startedAt, source, { items, fighters, scannedCount, pageCount }, attempts, complete, warnings);
+    },
+    async stats(filter = {}, options = {}) {
+      const startedAt = context.now();
+      const collection = await repository.collection({}, options);
+      const stats = summarizeRelicCollection(collection.data.items, filter, collection.data.fighters);
+      return toResult(
+        context,
+        startedAt,
+        "derived",
+        stats,
+        collection.meta.attempts,
+        collection.meta.complete,
+        [...collection.meta.warnings, ...stats.warnings],
+      );
+    },
     async owned(ownerInput, options = {}) {
       const owner = normalizeAddress(ownerInput);
       const startedAt = context.now();
@@ -794,4 +925,5 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       return toResult(context, startedAt, "starknet-rpc", normalizeAddress(value), response.attempts, true);
     },
   };
+  return repository;
 }

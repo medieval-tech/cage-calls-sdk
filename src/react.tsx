@@ -2,11 +2,14 @@ import { createContext, createElement, useContext, type ReactNode } from "react"
 import { useQuery, type QueryClient, type UseQueryOptions } from "@tanstack/react-query";
 
 import type { CageCallsClient } from "./client.js";
+import type { AnalyticsSummaryFilter, CageCallsAnalyticsSummary } from "./analyticsSummary.js";
 import { normalizeAddress } from "./codecs.js";
 import { cageCallsQueryKeys as keys } from "./queryKeys.js";
-import type { OwnedRelicsPage, RelicFeedInput } from "./relics.js";
+import type { OwnedRelicsPage, RelicCollection, RelicCollectionInput, RelicFeedInput } from "./relics.js";
+import type { RelicCollectionStats, RelicStatsFilter } from "./relicStats.js";
 import type {
   Address,
+  AnalyticsSnapshot,
   CageCallsActivity,
   CallPlan,
   ContractName,
@@ -159,6 +162,16 @@ export function useRelicFeed(input: RelicFeedInput = {}, options?: Options<DataR
   return useQuery({ queryKey: keys.relics(input), queryFn: ({ signal }) => client.relics.feed(input, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
+export function useRelicCollection(input: RelicCollectionInput = {}, options?: Options<DataResult<RelicCollection>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.relicCollection(input), queryFn: ({ signal }) => client.relics.collection(input, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
+export function useRelicStats(filter: RelicStatsFilter = {}, options?: Options<DataResult<RelicCollectionStats>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.relicStats(filter), queryFn: ({ signal }) => client.relics.stats(filter, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
 export function useOwnedRelics(account: Address, options?: Options<DataResult<OwnedRelicsPage>>) {
   const client = useCageCallsClient();
   return useQuery({ queryKey: keys.ownedRelics(account), queryFn: ({ signal }) => client.relics.owned(account, { signal }), refetchOnWindowFocus: false, ...options });
@@ -232,6 +245,16 @@ export function useActivity(input: ActivityInput = {}, options?: Options<DataRes
 export function useRawActivity(input: ActivityInput = {}, options?: Options<DataResult<Page<RawCageCallsEvent>>>) {
   const client = useCageCallsClient();
   return useQuery({ queryKey: [...keys.activity(input), "raw"], queryFn: ({ signal }) => client.activity.raw(input, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
+export function useAnalyticsSnapshot(options?: Options<DataResult<AnalyticsSnapshot>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.analytics(), queryFn: ({ signal }) => client.analytics.snapshot({ signal }), refetchOnWindowFocus: false, ...options });
+}
+
+export function useAnalyticsSummary(filter: AnalyticsSummaryFilter = {}, options?: Options<DataResult<CageCallsAnalyticsSummary>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.analyticsSummary(filter), queryFn: ({ signal }) => client.analytics.summary(filter, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
 export function useAdminStatus(contract: "FightFactory" | "FighterRegistry" | "Gacha" | "CageCallsOracle", account: Address, options?: Options<DataResult<boolean>>) {

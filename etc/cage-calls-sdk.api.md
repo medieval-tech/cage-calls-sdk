@@ -55,9 +55,89 @@ export class AllSourcesFailedError extends CageCallsSdkError {
 }
 
 // @public (undocumented)
+export interface AnalyticsDailyPoint {
+    // (undocumented)
+    cumulativeWallets: number;
+    // (undocumented)
+    day: string;
+    // (undocumented)
+    predictions: number;
+    // (undocumented)
+    uniqueWallets: number;
+    // (undocumented)
+    volume: bigint;
+}
+
+// @public (undocumented)
+export interface AnalyticsEventSummary {
+    // (undocumented)
+    allFightsPercentage: number;
+    // (undocumented)
+    allFightsWallets: number;
+    // (undocumented)
+    eventName: string;
+    // (undocumented)
+    fights: AnalyticsFightSummary[];
+    // (undocumented)
+    newWallets: number;
+    // (undocumented)
+    predictions: number;
+    // (undocumented)
+    returningWallets: number;
+    // (undocumented)
+    someFightsPercentage: number;
+    // (undocumented)
+    someFightsWallets: number;
+    // (undocumented)
+    uniqueWallets: number;
+}
+
+// @public (undocumented)
+export interface AnalyticsFightSummary {
+    // (undocumented)
+    eventName: string;
+    // (undocumented)
+    fightId: bigint;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    marketId: bigint;
+    // (undocumented)
+    predictions: number;
+    // (undocumented)
+    uniqueWallets: number;
+    // (undocumented)
+    volume: bigint;
+}
+
+// @public (undocumented)
+export interface AnalyticsMetrics {
+    // (undocumented)
+    averageBid: bigint;
+    // (undocumented)
+    averagePredictionsPerWallet: number;
+    // (undocumented)
+    correct: number;
+    // (undocumented)
+    predictions: number;
+    // (undocumented)
+    repeatWallets: number;
+    // (undocumented)
+    uniqueWallets: number;
+    // (undocumented)
+    unresolved: number;
+    // (undocumented)
+    volume: bigint;
+    // (undocumented)
+    wrong: number;
+}
+
+// @public (undocumented)
 export interface AnalyticsRepository {
     // (undocumented)
     snapshot(options?: RequestOptions): Promise<DataResult<AnalyticsSnapshot>>;
+    // (undocumented)
+    summary(filter?: AnalyticsSummaryFilter, options?: RequestOptions): Promise<DataResult<CageCallsAnalyticsSummary>>;
 }
 
 // @public (undocumented)
@@ -68,6 +148,24 @@ export interface AnalyticsSnapshot {
     fights: Fight[];
     // (undocumented)
     winnerChoiceByFight: Record<string, number>;
+}
+
+// @public (undocumented)
+export interface AnalyticsSummaryFilter {
+    // (undocumented)
+    buyers?: readonly Address[];
+    // (undocumented)
+    eventNames?: readonly string[];
+    // (undocumented)
+    fightIds?: readonly bigint[];
+    // (undocumented)
+    from?: bigint;
+    // (undocumented)
+    marketIds?: readonly bigint[];
+    // (undocumented)
+    productionOnly?: boolean;
+    // (undocumented)
+    to?: bigint;
 }
 
 // @public (undocumented)
@@ -111,6 +209,24 @@ export type CageCallsActivity = (ActivityBase & {
     type: "unknown";
     payload: Record<string, unknown>;
 });
+
+// @public (undocumented)
+export interface CageCallsAnalyticsSummary {
+    // (undocumented)
+    daily: AnalyticsDailyPoint[];
+    // (undocumented)
+    events: AnalyticsEventSummary[];
+    // (undocumented)
+    fights: AnalyticsFightSummary[];
+    // (undocumented)
+    filter: AnalyticsSummaryFilter;
+    // (undocumented)
+    includedBuys: FightBuy[];
+    // (undocumented)
+    includedFights: Fight[];
+    // (undocumented)
+    metrics: AnalyticsMetrics;
+}
 
 // @public (undocumented)
 export interface CageCallsCallBuilders {
@@ -300,6 +416,8 @@ export const cageCallsQueryKeys: Readonly<{
     }) => readonly ["cage-calls", string, ...unknown[]];
     market: (marketId: bigint) => readonly ["cage-calls", string, ...unknown[]];
     relics: (input?: RelicFeedInput) => readonly ["cage-calls", string, ...unknown[]];
+    relicCollection: (input?: RelicCollectionInput) => readonly ["cage-calls", string, ...unknown[]];
+    relicStats: (filter?: RelicStatsFilter) => readonly ["cage-calls", string, ...unknown[]];
     relicsMany: (tokenIds: readonly bigint[]) => readonly ["cage-calls", string, ...unknown[]];
     relic: (tokenId: bigint) => readonly ["cage-calls", string, ...unknown[]];
     ownedRelics: (account: Address) => readonly ["cage-calls", string, ...unknown[]];
@@ -315,6 +433,8 @@ export const cageCallsQueryKeys: Readonly<{
         cursor?: string;
         keys?: string[];
     }) => readonly ["cage-calls", string, ...unknown[]];
+    analytics: () => readonly ["cage-calls", string, ...unknown[]];
+    analyticsSummary: (filter?: AnalyticsSummaryFilter) => readonly ["cage-calls", string, ...unknown[]];
     admin: (detail?: string) => readonly ["cage-calls", string, ...unknown[]];
 }>;
 
@@ -909,6 +1029,11 @@ export interface FightWinner {
     winner: Address;
 }
 
+// Warning: (ae-forgotten-export) The symbol "MetadataRelic" needs to be exported by the entry point index.d.ts
+//
+// @public
+export function filterRelicCollection(relics: readonly Relic[], filter?: RelicStatsFilter): MetadataRelic[];
+
 // @public (undocumented)
 export interface GachaPoolState {
     // (undocumented)
@@ -1337,6 +1462,9 @@ export function normalizeAddress(value: string | number | bigint, label?: string
 export function normalizeFelt(value: string | number | bigint, label?: string): Felt;
 
 // @public (undocumented)
+export function normalizeRelicMoveType(value: string): string;
+
+// @public (undocumented)
 export interface OwnedRelicsPage extends Page<Relic> {
     // (undocumented)
     provenance: RelicOwnershipProvenance;
@@ -1426,6 +1554,51 @@ export interface Relic {
 }
 
 // @public (undocumented)
+export const RELIC_STAT_NAMES: readonly ["power", "speed", "control", "risk", "complexity", "versatility"];
+
+// @public (undocumented)
+export interface RelicCollection {
+    // (undocumented)
+    fighters: Fighter[];
+    // (undocumented)
+    items: Relic[];
+    // (undocumented)
+    pageCount: number;
+    // (undocumented)
+    scannedCount: number;
+}
+
+// @public (undocumented)
+export interface RelicCollectionInput {
+    // (undocumented)
+    enrichFighters?: boolean;
+    // (undocumented)
+    pageSize?: number;
+}
+
+// @public (undocumented)
+export interface RelicCollectionStats {
+    // (undocumented)
+    coverage: {
+        inventoryCount: number;
+        metadataCount: number;
+        selectedCount: number;
+        missingMetadata: number;
+        missingDefinitionIds: number;
+    };
+    // (undocumented)
+    definitions: RelicStatsView;
+    // (undocumented)
+    facets: RelicStatsFacets;
+    // (undocumented)
+    filter: RelicStatsFilter;
+    // (undocumented)
+    minted: RelicStatsView;
+    // (undocumented)
+    warnings: DataWarning[];
+}
+
+// @public (undocumented)
 export interface RelicFeedInput {
     // (undocumented)
     cursor?: bigint;
@@ -1511,6 +1684,9 @@ export interface RelicMetadataAttribute {
 export type RelicMetadataMode = "external" | "onchain";
 
 // @public (undocumented)
+export function relicMoveTypeLabel(value: string): string;
+
+// @public (undocumented)
 export interface RelicOwnershipProvenance {
     // (undocumented)
     onchainBalance: bigint;
@@ -1523,6 +1699,15 @@ export interface RelicOwnershipProvenance {
 }
 
 // @public (undocumented)
+export function relicRarityLabel(rarity: number): string;
+
+// @public (undocumented)
+export type RelicRarityTier = "common" | "rare" | "mythic" | "shiny";
+
+// @public (undocumented)
+export function relicRarityTier(rarity: number): RelicRarityTier;
+
+// @public (undocumented)
 export interface RelicRequestOptions extends RequestOptions {
     // (undocumented)
     metadata?: RelicMetadataMode;
@@ -1530,6 +1715,8 @@ export interface RelicRequestOptions extends RequestOptions {
 
 // @public (undocumented)
 export interface RelicsRepository {
+    // (undocumented)
+    collection(input?: RelicCollectionInput, options?: RequestOptions): Promise<DataResult<RelicCollection>>;
     // (undocumented)
     feed(input?: RelicFeedInput, options?: RequestOptions): Promise<DataResult<Page<Relic, bigint>>>;
     // (undocumented)
@@ -1542,6 +1729,102 @@ export interface RelicsRepository {
     owned(owner: Address, options?: RequestOptions): Promise<DataResult<OwnedRelicsPage>>;
     // (undocumented)
     owner(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Address>>;
+    // (undocumented)
+    stats(filter?: RelicStatsFilter, options?: RequestOptions): Promise<DataResult<RelicCollectionStats>>;
+}
+
+// @public (undocumented)
+export interface RelicStatAverages {
+    // (undocumented)
+    complexity: number;
+    // (undocumented)
+    control: number;
+    // (undocumented)
+    power: number;
+    // (undocumented)
+    risk: number;
+    // (undocumented)
+    speed: number;
+    // (undocumented)
+    versatility: number;
+}
+
+// @public (undocumented)
+export type RelicStatName = typeof RELIC_STAT_NAMES[number];
+
+// @public (undocumented)
+export interface RelicStatsBreakdown<Key extends string | number | bigint = string> {
+    // (undocumented)
+    averages: RelicStatAverages;
+    // (undocumented)
+    count: number;
+    // (undocumented)
+    fighter?: Fighter;
+    // (undocumented)
+    key: Key;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    percentage: number;
+}
+
+// @public (undocumented)
+export interface RelicStatsFacets {
+    // (undocumented)
+    fighters: Array<{
+        fighterId: bigint;
+        label: string;
+        fighter?: Fighter;
+    }>;
+    // (undocumented)
+    fightIds: bigint[];
+    // (undocumented)
+    moveTypes: Array<{
+        moveType: string;
+        label: string;
+    }>;
+    // (undocumented)
+    rarityLevels: number[];
+    // (undocumented)
+    rarityTiers: RelicRarityTier[];
+    // (undocumented)
+    seasonIds: bigint[];
+}
+
+// @public (undocumented)
+export interface RelicStatsFilter {
+    // (undocumented)
+    fighterIds?: readonly bigint[];
+    // (undocumented)
+    fightIds?: readonly bigint[];
+    // (undocumented)
+    moveTypes?: readonly string[];
+    // (undocumented)
+    rarityLevels?: readonly number[];
+    // (undocumented)
+    rarityTiers?: readonly RelicRarityTier[];
+    // (undocumented)
+    seasonIds?: readonly bigint[];
+}
+
+// @public (undocumented)
+export interface RelicStatsView {
+    // (undocumented)
+    averages: RelicStatAverages;
+    // (undocumented)
+    byFight: RelicStatsBreakdown<bigint>[];
+    // (undocumented)
+    byFighter: RelicStatsBreakdown<bigint>[];
+    // (undocumented)
+    byMoveType: RelicStatsBreakdown<string>[];
+    // (undocumented)
+    byRarityLevel: RelicStatsBreakdown<number>[];
+    // (undocumented)
+    byRarityTier: RelicStatsBreakdown<RelicRarityTier>[];
+    // (undocumented)
+    bySeason: RelicStatsBreakdown<bigint>[];
+    // (undocumented)
+    count: number;
 }
 
 // @public (undocumented)
@@ -1782,6 +2065,12 @@ export interface StarknetCall {
     // (undocumented)
     entrypoint: string;
 }
+
+// @public (undocumented)
+export function summarizeAnalyticsSnapshot(snapshot: AnalyticsSnapshot, filter?: AnalyticsSummaryFilter): CageCallsAnalyticsSummary;
+
+// @public (undocumented)
+export function summarizeRelicCollection(relics: readonly Relic[], filter?: RelicStatsFilter, fighters?: readonly Fighter[]): RelicCollectionStats;
 
 // @public (undocumented)
 export function toHex(value: string | number | bigint): Hex;

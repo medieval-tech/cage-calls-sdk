@@ -1,8 +1,12 @@
 import { normalizeAddress } from "./codecs.js";
-import type { RelicFeedInput } from "./relics.js";
+import type { AnalyticsSummaryFilter } from "./analyticsSummary.js";
+import type { RelicCollectionInput, RelicFeedInput } from "./relics.js";
+import type { RelicStatsFilter } from "./relicStats.js";
 import type { Address, CageCallsQueryKey } from "./types.js";
 
 const key = (scope: string, ...values: readonly unknown[]): CageCallsQueryKey => ["cage-calls", scope, ...values];
+const bigintList = (values: readonly bigint[] | undefined) => values?.map(String).sort().join(",") ?? "all";
+const stringList = (values: readonly string[] | undefined) => values?.map(String).sort().join(",") ?? "all";
 
 export const cageCallsQueryKeys = Object.freeze({
   all: () => key("all"),
@@ -18,6 +22,8 @@ export const cageCallsQueryKeys = Object.freeze({
   markets: (input?: { limit?: number; cursor?: string }) => key("markets", input?.limit ?? "default", input?.cursor ?? "start"),
   market: (marketId: bigint) => key("market", marketId.toString()),
   relics: (input?: RelicFeedInput) => key("relics", input?.limit ?? "default", input?.cursor?.toString() ?? "start", input?.metadata ?? "external"),
+  relicCollection: (input?: RelicCollectionInput) => key("relics", "collection", input?.pageSize ?? "default", input?.enrichFighters ?? true),
+  relicStats: (filter?: RelicStatsFilter) => key("relics", "stats", bigintList(filter?.fighterIds), bigintList(filter?.seasonIds), bigintList(filter?.fightIds), stringList(filter?.rarityTiers), stringList(filter?.rarityLevels?.map(String)), stringList(filter?.moveTypes)),
   relicsMany: (tokenIds: readonly bigint[]) => key("relics", "many", ...tokenIds.map(String)),
   relic: (tokenId: bigint) => key("relic", tokenId.toString()),
   ownedRelics: (account: Address) => key("owned-relics", normalizeAddress(account)),
@@ -26,5 +32,7 @@ export const cageCallsQueryKeys = Object.freeze({
   gachaTokens: (fightId: bigint, input?: { cursor?: bigint; limit?: number }) => key("gacha", fightId.toString(), "tokens", input?.cursor?.toString() ?? "start", input?.limit ?? "default"),
   tokens: (account?: Address, detail = "all") => key("tokens", account ? normalizeAddress(account) : "all", detail),
   activity: (input?: { limit?: number; cursor?: string; keys?: string[] }) => key("activity", input?.limit ?? "default", input?.cursor ?? "start", ...(input?.keys ?? [])),
+  analytics: () => key("analytics", "snapshot"),
+  analyticsSummary: (filter?: AnalyticsSummaryFilter) => key("analytics", "summary", filter?.from?.toString() ?? "start", filter?.to?.toString() ?? "end", bigintList(filter?.fightIds), bigintList(filter?.marketIds), stringList(filter?.eventNames), stringList(filter?.buyers), filter?.productionOnly ?? false),
   admin: (detail = "all") => key("admin", detail),
 });

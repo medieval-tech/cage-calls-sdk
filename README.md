@@ -4,7 +4,7 @@ Framework-neutral TypeScript access to Cage Calls deployments. The core package 
 decoding, source fallbacks, validation, and typed call construction. It never owns a wallet,
 signs a transaction, or waits for a receipt.
 
-> Status: `0.1.0-next.11`. The API and deployment presets are canary-grade until the production
+> Status: `0.1.0-next.12`. The API and deployment presets are canary-grade until the production
 > client migration and network smoke tests are complete.
 
 ## Install
@@ -159,6 +159,47 @@ const inventory = await client.relics.feed({ limit: 20, metadata: "onchain" });
 const visible = await client.relics.getMany(
   inventory.data.items.slice(0, 20).map((relic) => relic.tokenId),
 );
+```
+
+For collection-wide analysis, `relics.collection()` traverses every available page with onchain
+metadata and enriches referenced fighters. `relics.stats()` adds ready-made minted-edition and
+unique-definition views, while the pure helpers keep custom dashboards and export scripts free
+to recompute or extend the same data:
+
+```ts
+import {
+  filterRelicCollection,
+  summarizeRelicCollection,
+} from "@medieval-tech/cage-calls-sdk";
+
+const collection = await client.relics.collection();
+const filter = { fighterIds: [42n], rarityTiers: ["common"] as const };
+const summary = summarizeRelicCollection(
+  collection.data.items,
+  filter,
+  collection.data.fighters,
+);
+const matchingTokens = filterRelicCollection(collection.data.items, filter);
+
+console.log(summary.minted.byMoveType);
+console.log(summary.definitions.byRarityLevel);
+console.log(summary.definitions.averages.power);
+```
+
+Relic filters cover fighter, season, fight, normalized move type, exact rarity, and rarity tier.
+Every breakdown includes count, percentage, and average power, speed, control, risk, complexity,
+and versatility. Missing metadata and conflicting definition metadata remain explicit in coverage
+and warnings instead of being silently dropped.
+
+Market analytics expose the same split between raw data and reusable derived views:
+
+```ts
+const snapshot = await client.analytics.snapshot();
+const summary = await client.analytics.summary({ productionOnly: true, from: 1_700_000_000n });
+
+console.log(snapshot.data.buys); // raw indexed rows
+console.log(summary.data.metrics); // exact bigint volume plus wallet and prediction metrics
+console.log(summary.data.events); // event and per-fight breakdowns
 ```
 
 Run `pnpm check:relic-parity` to compare each preset's onchain minted supply with Torii. Pass one
