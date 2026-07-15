@@ -5,9 +5,79 @@
 ```ts
 
 // @public (undocumented)
+export type AccountAction = {
+    type: "redeem-payout";
+    fightId: bigint;
+} | {
+    type: "strike-gacha";
+    fightId: bigint;
+    ticketBalance: bigint;
+} | {
+    type: "keep-relic";
+    fightId: bigint;
+    tokenId: bigint;
+};
+
+// @public (undocumented)
+export interface AccountEventFightState extends PublicEventFight {
+    // (undocumented)
+    gachaUser?: GachaUserState;
+}
+
+// @public (undocumented)
+export interface AccountEventState {
+    // (undocumented)
+    account: Address;
+    // (undocumented)
+    actions: AccountAction[];
+    // (undocumented)
+    fights: AccountEventFightState[];
+    // (undocumented)
+    lifecycle: PublicEventSnapshot["lifecycle"];
+    // (undocumented)
+    ref: EventRef;
+    // (undocumented)
+    relics: Relic[];
+}
+
+// @public (undocumented)
+export interface AccountPortfolio {
+    // (undocumented)
+    account: Address;
+    // (undocumented)
+    actions: AccountAction[];
+    // (undocumented)
+    buys: FightBuy[];
+    // (undocumented)
+    callsBalance: bigint;
+    // (undocumented)
+    fights: AccountEventFightState[];
+    // (undocumented)
+    relics: Relic[];
+}
+
+// @public (undocumented)
+export interface AccountsRepository {
+    // (undocumented)
+    event(ref: EventRef, account: Address, options?: RequestOptions): Promise<DataResult<AccountEventState>>;
+    // (undocumented)
+    portfolio(account: Address, options?: RequestOptions): Promise<DataResult<AccountPortfolio>>;
+}
+
+// @public (undocumented)
 export interface ActivityRepository {
     // (undocumented)
+    all(input?: {
+        keys?: string[];
+    }, options?: RequestOptions): Promise<DataResult<CageCallsActivity[]>>;
+    // @deprecated (undocumented)
     list(input?: {
+        limit?: number;
+        cursor?: string;
+        keys?: string[];
+    }, options?: RequestOptions): Promise<DataResult<Page<CageCallsActivity>>>;
+    // (undocumented)
+    page(input?: {
         limit?: number;
         cursor?: string;
         keys?: string[];
@@ -229,90 +299,9 @@ export interface CageCallsAnalyticsSummary {
 }
 
 // @public (undocumented)
-export interface CageCallsCallBuilders {
-    // (undocumented)
-    admin: {
-        registerToken(token: Address): CallPlan;
-        registerOracle(oracle: Address): CallPlan;
-        pauseMarkets(): CallPlan;
-        unpauseMarkets(): CallPlan;
-        grantRole(contract: ContractName, role: Felt, account: Address): CallPlan;
-        revokeRole(contract: ContractName, role: Felt, account: Address): CallPlan;
-        batch(plans: readonly CallPlan[]): CallPlan;
-    };
-    // (undocumented)
-    fighters: {
-        register(fighterId: bigint, name: string, weightClass: string): CallPlan;
-        update(fighterId: bigint, name: string, weightClass: string): CallPlan;
-        activate(fighterId: bigint): CallPlan;
-        deactivate(fighterId: bigint): CallPlan;
-        grantAdmin(account: Address): CallPlan;
-        revokeAdmin(account: Address): CallPlan;
-    };
-    // (undocumented)
-    fights: {
-        create(input: FightCreateInput): CallPlan;
-        buy(fightId: bigint, choiceValue: bigint): CallPlan;
-        close(fightId: bigint): CallPlan;
-        settle(fightId: bigint): CallPlan;
-        redeem(fightId: bigint): CallPlan;
-        setCollateral(token: Address): CallPlan;
-        setWinnerAndSettle(fightId: bigint, marketId: bigint, winnerIndex: number): CallPlan;
-        grantAdmin(account: Address): CallPlan;
-        revokeAdmin(account: Address): CallPlan;
-    };
-    // (undocumented)
-    gacha: {
-        strike(fightId: bigint, vrfSeed: Felt): CallPlan;
-        keep(fightId: bigint, owner?: Address): CallPlan;
-        setOpen(fightId: bigint, open: boolean): CallPlan;
-        registerRelic(fightId: bigint, tokenId: bigint): CallPlan;
-        unregisterRelic(fightId: bigint, tokenId: bigint): CallPlan;
-        reset(fightId: bigint): CallPlan;
-        setVrf(address: Address): CallPlan;
-        grantAdmin(account: Address): CallPlan;
-        revokeAdmin(account: Address): CallPlan;
-    };
-    // (undocumented)
-    markets: {
-        create(input: MarketCreateInput): CallPlan;
-        approveCollateral(amount: bigint, token?: Address): CallPlan;
-        buy(marketId: bigint, outcomeIndex: number, amount: bigint, input?: {
-            approve?: boolean;
-            token?: Address;
-        }): CallPlan;
-        close(marketId: bigint): CallPlan;
-        resolve(marketId: bigint): CallPlan;
-        redeem(marketId: bigint, positionIds: readonly bigint[]): CallPlan;
-        redeemPositions(input: {
-            marketId: bigint;
-            positionIds: readonly bigint[];
-            collateralToken: Address;
-            conditionId: bigint;
-            outcomeSlotCount: number;
-        }): CallPlan;
-    };
-    // (undocumented)
-    oracle: {
-        setWinner(marketId: bigint, winner: bigint): CallPlan;
-        setWinnerIndex(marketId: bigint, winnerIndex: number): CallPlan;
-        grantAdmin(account: Address): CallPlan;
-        revokeAdmin(account: Address): CallPlan;
-    };
-    // (undocumented)
-    relics: {
-        mint(recipient: Address, metadata: RelicMetadata, eventName: string, editionNumber: bigint, tokenUri: string): CallPlan;
-        updateMetadata(tokenId: bigint, metadata: RelicMetadata, eventName: string): CallPlan;
-        updateTokenUri(tokenId: bigint, tokenUri: string): CallPlan;
-        grantMinter(account: Address): CallPlan;
-        revokeMinter(account: Address): CallPlan;
-        grantCurator(account: Address): CallPlan;
-        revokeCurator(account: Address): CallPlan;
-    };
-}
-
-// @public (undocumented)
 export interface CageCallsClient {
+    // (undocumented)
+    readonly accounts: AccountsRepository;
     // (undocumented)
     readonly activity: ActivityRepository;
     // (undocumented)
@@ -320,9 +309,9 @@ export interface CageCallsClient {
     // (undocumented)
     readonly analytics: AnalyticsRepository;
     // (undocumented)
-    readonly calls: CageCallsCallBuilders;
-    // (undocumented)
     readonly capabilities: CapabilityRegistry;
+    // (undocumented)
+    readonly events: EventsRepository;
     // (undocumented)
     readonly fighters: FightersRepository;
     // (undocumented)
@@ -332,17 +321,78 @@ export interface CageCallsClient {
     // (undocumented)
     readonly gacha: GachaRepository;
     // (undocumented)
+    readonly live: LiveRepository;
+    // (undocumented)
     readonly markets: MarketsRepository;
     // (undocumented)
     readonly network: Readonly<CageCallsNetwork>;
     // (undocumented)
     readonly relics: RelicsRepository;
     // (undocumented)
+    readonly sources: SourceStatusRegistry;
+    // (undocumented)
     readonly tokens: TokensRepository;
 }
 
 // @public (undocumented)
 export type CageCallsErrorCode = "CONFIGURATION_ERROR" | "VALIDATION_ERROR" | "UNSUPPORTED_CAPABILITY" | "TRANSPORT_ERROR" | "ALL_SOURCES_FAILED" | "DECODE_ERROR";
+
+// @public (undocumented)
+export interface CageCallsLiveObserver {
+    // (undocumented)
+    error?(error: unknown): void;
+    // (undocumented)
+    status?(status: LiveConnectionStatus): void;
+    // (undocumented)
+    update(update: CageCallsLiveUpdate): void;
+}
+
+// @public (undocumented)
+export interface CageCallsLiveSubscription {
+    // (undocumented)
+    unsubscribe(): void | Promise<void>;
+}
+
+// @public
+export interface CageCallsLiveTransport {
+    // (undocumented)
+    subscribe(observer: CageCallsLiveObserver): Promise<CageCallsLiveSubscription> | CageCallsLiveSubscription;
+}
+
+// @public (undocumented)
+export type CageCallsLiveUpdate = {
+    kind: "activity";
+    activity: CageCallsActivity;
+} | {
+    kind: "fighter";
+    fighterId: bigint;
+} | {
+    kind: "fight";
+    fightId: bigint;
+    event?: EventRef;
+} | {
+    kind: "market";
+    marketId: bigint;
+    fightId?: bigint;
+} | {
+    kind: "relic";
+    tokenId: bigint;
+    owner?: Address;
+    fightId?: bigint;
+    fighterId?: bigint;
+} | {
+    kind: "gacha";
+    fightId: bigint;
+    account?: Address;
+} | {
+    kind: "token-balance";
+    account: Address;
+    token: string;
+    tokenId?: bigint;
+} | {
+    kind: "reconcile";
+    reason: "reconnected";
+};
 
 // @public (undocumented)
 export interface CageCallsNetwork {
@@ -406,6 +456,9 @@ export const cageCallsQueryKeys: Readonly<{
         viewer?: Address;
         now?: bigint;
     }) => readonly ["cage-calls", string, ...unknown[]];
+    event: (ref: EventRef) => readonly ["cage-calls", string, ...unknown[]];
+    accountEvent: (account: Address, ref: EventRef) => readonly ["cage-calls", string, ...unknown[]];
+    accountPortfolio: (account: Address) => readonly ["cage-calls", string, ...unknown[]];
     portfolio: (account: Address, input?: {
         limit?: number;
         cursor?: string;
@@ -450,6 +503,8 @@ export class CageCallsSdkError extends Error {
 // @public (undocumented)
 export interface CageCallsTransports {
     // (undocumented)
+    live?: CageCallsLiveTransport;
+    // (undocumented)
     metadata?: MetadataTransport;
     // (undocumented)
     rpc: RpcTransport;
@@ -485,20 +540,6 @@ export class CairoReader {
 }
 
 // @public (undocumented)
-export interface CallPlan {
-    // (undocumented)
-    calls: StarknetCall[];
-    // (undocumented)
-    invalidate: CageCallsQueryKey[];
-    // (undocumented)
-    requirements?: {
-        controller?: boolean;
-        vrf?: boolean;
-        tokenApproval?: boolean;
-    };
-}
-
-// @public (undocumented)
 export type CapabilityName = "fightFeed" | "fightBuyPagination" | "relicFeed" | "relicBatch" | "relicOwnerPage" | "fighterBatch" | "gachaPoolAggregate" | "gachaAvailableTokenIds";
 
 // @public (undocumented)
@@ -510,6 +551,9 @@ export interface CapabilityRegistry {
     // (undocumented)
     snapshot(): Readonly<DeploymentCapabilities>;
 }
+
+// @public (undocumented)
+export type CircuitState = "closed" | "open" | "half-open";
 
 // @public (undocumented)
 export function clampPageSize(value: number | undefined, maximum: number, fallback: number): number;
@@ -529,6 +573,17 @@ export function createActivityRepository(context: RepositoryContext): ActivityRe
 export function createAdminRepository(context: RepositoryContext): AdminRepository;
 
 // @public (undocumented)
+export function createAggregateRepositories(context: RepositoryContext, dependencies: {
+    fights: FightsRepository;
+    gacha: GachaRepository;
+    relics: RelicsRepository;
+    tokens: TokensRepository;
+}): {
+    events: EventsRepository;
+    accounts: AccountsRepository;
+};
+
+// @public (undocumented)
 export function createAnalyticsRepository(context: RepositoryContext): AnalyticsRepository;
 
 // @public (undocumented)
@@ -545,11 +600,10 @@ export interface CreateCageCallsClientOptions {
     // (undocumented)
     now?: () => number;
     // (undocumented)
+    resilience?: PassiveCircuitOptions | false;
+    // (undocumented)
     transports: CageCallsTransports;
 }
-
-// @public (undocumented)
-export function createCallBuilders(network: Readonly<CageCallsNetwork>): CageCallsCallBuilders;
 
 // @public (undocumented)
 export function createCapabilityRegistry(network: CageCallsNetwork, rpc: RpcTransport): CapabilityRegistry;
@@ -605,12 +659,32 @@ export function createIpfsMetadataTransport(options: {
 } & HttpOptions): MetadataTransport;
 
 // @public (undocumented)
+export function createLiveRepository(transport?: CageCallsLiveTransport): LiveRepository;
+
+// @public (undocumented)
 export function createMarketsRepository(context: RepositoryContext): MarketsRepository;
 
 // Warning: (ae-forgotten-export) The symbol "RelicContext" needs to be exported by the entry point index.d.ts
 //
 // @public (undocumented)
 export function createRelicsRepository(context: RelicContext): RelicsRepository;
+
+// @public (undocumented)
+export function createRequestCoalescer(): RequestCoalescer;
+
+// @public (undocumented)
+export function createResilientMetadataTransport(transport: MetadataTransport, registry: ReturnType<typeof createSourceStatusRegistry>, options?: PassiveCircuitOptions): MetadataTransport;
+
+// @public (undocumented)
+export function createResilientRpcTransport(transport: RpcTransport, registry: ReturnType<typeof createSourceStatusRegistry>, options?: PassiveCircuitOptions): RpcTransport;
+
+// @public (undocumented)
+export function createResilientToriiTransport(transport: ToriiTransport, registry: ReturnType<typeof createSourceStatusRegistry>, options?: PassiveCircuitOptions): ToriiTransport;
+
+// @public (undocumented)
+export function createSourceStatusRegistry(): SourceStatusRegistry & {
+    update(source: RuntimeSource, update: Partial<SourceStatus>): void;
+};
 
 // @public (undocumented)
 export function createTokensRepository(context: RepositoryContext): TokensRepository;
@@ -778,6 +852,20 @@ export function encodeU256(value: string | number | bigint): string[];
 export function errorCode(error: unknown): string;
 
 // @public (undocumented)
+export interface EventRef {
+    // (undocumented)
+    eventName: string;
+    // (undocumented)
+    seasonId: bigint;
+}
+
+// @public (undocumented)
+export interface EventsRepository {
+    // (undocumented)
+    get(ref: EventRef, options?: RequestOptions): Promise<DataResult<PublicEventSnapshot>>;
+}
+
+// @public (undocumented)
 export type Felt = Hex;
 
 // @public (undocumented)
@@ -835,32 +923,6 @@ export interface FightBuy {
 }
 
 // @public (undocumented)
-export interface FightCreateInput {
-    // (undocumented)
-    choiceALabel: string;
-    // (undocumented)
-    choiceAValue?: bigint;
-    // (undocumented)
-    choiceBLabel: string;
-    // (undocumented)
-    choiceBValue?: bigint;
-    // (undocumented)
-    eventName: string;
-    // (undocumented)
-    fighterAId: bigint;
-    // (undocumented)
-    fighterBId: bigint;
-    // (undocumented)
-    isDev?: boolean;
-    // (undocumented)
-    market: MarketCreateInput;
-    // (undocumented)
-    seasonId: bigint;
-    // (undocumented)
-    sponsor?: string;
-}
-
-// @public (undocumented)
 export interface Fighter {
     // (undocumented)
     active: boolean;
@@ -875,13 +937,23 @@ export interface Fighter {
 // @public (undocumented)
 export interface FightersRepository {
     // (undocumented)
+    all(input?: {
+        active?: boolean;
+    }, options?: RequestOptions): Promise<DataResult<Fighter[]>>;
+    // (undocumented)
     get(fighterId: bigint, options?: RequestOptions): Promise<DataResult<Fighter>>;
     // (undocumented)
     getMany(fighterIds: readonly bigint[], options?: RequestOptions): Promise<DataResult<Fighter[]>>;
     // (undocumented)
     isAdmin(account: Address, options?: RequestOptions): Promise<DataResult<boolean>>;
-    // (undocumented)
+    // @deprecated (undocumented)
     list(input?: {
+        active?: boolean;
+        limit?: number;
+        cursor?: string;
+    }, options?: RequestOptions): Promise<DataResult<Page<Fighter>>>;
+    // (undocumented)
+    page(input?: {
         active?: boolean;
         limit?: number;
         cursor?: string;
@@ -903,7 +975,19 @@ export interface FightEvent {
 // @public (undocumented)
 export interface FightEventsRepository {
     // (undocumented)
+    all(input?: {
+        viewer?: Address;
+        now?: bigint;
+    }, options?: RequestOptions): Promise<DataResult<FightEvent[]>>;
+    // @deprecated (undocumented)
     list(input?: {
+        limit?: number;
+        cursor?: bigint;
+        viewer?: Address;
+        now?: bigint;
+    }, options?: RequestOptions): Promise<DataResult<Page<FightEvent, bigint>>>;
+    // (undocumented)
+    page(input?: {
         limit?: number;
         cursor?: bigint;
         viewer?: Address;
@@ -968,10 +1052,16 @@ export interface FightPotState {
 // @public (undocumented)
 export interface FightsRepository {
     // (undocumented)
+    all(input?: {
+        seasonId?: bigint;
+    }, options?: RequestOptions): Promise<DataResult<Fight[]>>;
+    // (undocumented)
     buys(fightId: bigint, input?: {
         offset?: number;
         limit?: number;
     }, options?: RequestOptions): Promise<DataResult<Page<FightBuy, number>>>;
+    // (undocumented)
+    buysAll(fightId: bigint, options?: RequestOptions): Promise<DataResult<FightBuy[]>>;
     // (undocumented)
     feed(input?: {
         limit?: number;
@@ -979,9 +1069,19 @@ export interface FightsRepository {
         viewer?: Address;
     }, options?: RequestOptions): Promise<DataResult<Page<FightFeedItem, bigint>>>;
     // (undocumented)
-    get(fightId: bigint, options?: RequestOptions): Promise<DataResult<Fight>>;
+    feedAll(input?: {
+        viewer?: Address;
+    }, options?: RequestOptions): Promise<DataResult<FightFeedItem[]>>;
     // (undocumented)
+    get(fightId: bigint, options?: RequestOptions): Promise<DataResult<Fight>>;
+    // @deprecated (undocumented)
     list(input?: {
+        limit?: number;
+        cursor?: string;
+        seasonId?: bigint;
+    }, options?: RequestOptions): Promise<DataResult<Page<Fight>>>;
+    // (undocumented)
+    page(input?: {
         limit?: number;
         cursor?: string;
         seasonId?: bigint;
@@ -991,6 +1091,8 @@ export interface FightsRepository {
         limit?: number;
         cursor?: string;
     }, options?: RequestOptions): Promise<DataResult<Page<FightBuy>>>;
+    // (undocumented)
+    portfolioAll(account: Address, options?: RequestOptions): Promise<DataResult<FightBuy[]>>;
     // (undocumented)
     potState(fightId: bigint, options?: RequestOptions): Promise<DataResult<FightPotState>>;
     // (undocumented)
@@ -1068,6 +1170,8 @@ export interface GachaRepository {
         limit?: number;
     }, options?: RequestOptions): Promise<DataResult<Page<bigint, bigint>>>;
     // (undocumented)
+    availableTokenIdsAll(fightId: bigint, options?: RequestOptions): Promise<DataResult<bigint[]>>;
+    // (undocumented)
     isAdmin(account: Address, options?: RequestOptions): Promise<DataResult<boolean>>;
     // (undocumented)
     pool(fightId: bigint, options?: RequestOptions): Promise<DataResult<GachaPoolState>>;
@@ -1096,6 +1200,27 @@ export type Hex = `0x${string}`;
 
 // @public (undocumented)
 export function ipfsPath(uri: string): string | undefined;
+
+// @public (undocumented)
+export type LiveConnectionStatus = "connecting" | "connected" | "disconnected" | "reconnecting";
+
+// @public (undocumented)
+export interface LiveFilter {
+    // (undocumented)
+    account?: Address;
+    // (undocumented)
+    event?: EventRef;
+    // (undocumented)
+    kinds?: readonly CageCallsLiveUpdate["kind"][];
+}
+
+// @public (undocumented)
+export interface LiveRepository {
+    // (undocumented)
+    readonly available: boolean;
+    // (undocumented)
+    subscribe(filter: LiveFilter, observer: CageCallsLiveObserver): Promise<CageCallsLiveSubscription>;
+}
 
 // @public (undocumented)
 export const MAINNET_PRESET: {
@@ -1205,46 +1330,6 @@ export interface MarketCatalogItem {
 }
 
 // @public (undocumented)
-export interface MarketCreateInput {
-    // (undocumented)
-    collateralToken?: Address;
-    // (undocumented)
-    creatorFee?: number;
-    // (undocumented)
-    endAt: bigint;
-    // (undocumented)
-    feeCurve?: {
-        start: number;
-        end: number;
-    };
-    // (undocumented)
-    feeShareCurve?: {
-        start: number;
-        end: number;
-    };
-    // (undocumented)
-    fundingAmount: bigint;
-    // (undocumented)
-    initialRepartition: readonly number[];
-    // (undocumented)
-    oracle?: Address;
-    // (undocumented)
-    oracleExtraParams?: readonly Felt[];
-    // (undocumented)
-    oracleParams?: readonly Felt[];
-    // (undocumented)
-    outcomeValues: readonly bigint[];
-    // (undocumented)
-    resolveAt: bigint;
-    // (undocumented)
-    startAt: bigint;
-    // (undocumented)
-    terms?: string;
-    // (undocumented)
-    title?: string;
-}
-
-// @public (undocumented)
 export interface MarketPosition {
     // (undocumented)
     marketId: bigint;
@@ -1261,6 +1346,8 @@ export interface MarketPosition {
 // @public (undocumented)
 export interface MarketsRepository {
     // (undocumented)
+    all(options?: RequestOptions): Promise<DataResult<Market[]>>;
+    // (undocumented)
     catalog(input?: {
         limit?: number;
         cursor?: string;
@@ -1269,8 +1356,13 @@ export interface MarketsRepository {
     conditionalBalance(account: Address, positionId: bigint, options?: RequestOptions): Promise<DataResult<bigint>>;
     // (undocumented)
     get(marketId: bigint, options?: RequestOptions): Promise<DataResult<Market>>;
-    // (undocumented)
+    // @deprecated (undocumented)
     list(input?: {
+        limit?: number;
+        cursor?: string;
+    }, options?: RequestOptions): Promise<DataResult<Page<Market>>>;
+    // (undocumented)
+    page(input?: {
         limit?: number;
         cursor?: string;
     }, options?: RequestOptions): Promise<DataResult<Page<Market>>>;
@@ -1478,6 +1570,34 @@ export interface Page<T, Cursor = string> {
     hasMore: boolean;
     // (undocumented)
     items: T[];
+}
+
+// @public (undocumented)
+export interface PassiveCircuitOptions {
+    // (undocumented)
+    cooldownMs?: number;
+    // (undocumented)
+    failureThreshold?: number;
+    // (undocumented)
+    now?: () => number;
+}
+
+// @public (undocumented)
+export interface PublicEventFight {
+    // (undocumented)
+    fight: FightFeedItem;
+    // (undocumented)
+    gachaPool?: GachaPoolState;
+}
+
+// @public (undocumented)
+export interface PublicEventSnapshot {
+    // (undocumented)
+    fights: PublicEventFight[];
+    // (undocumented)
+    lifecycle: "upcoming" | "open" | "closed" | "settled" | "mixed";
+    // (undocumented)
+    ref: EventRef;
 }
 
 // @public (undocumented)
@@ -1716,8 +1836,10 @@ export interface RelicRequestOptions extends RequestOptions {
 // @public (undocumented)
 export interface RelicsRepository {
     // (undocumented)
-    collection(input?: RelicCollectionInput, options?: RequestOptions): Promise<DataResult<RelicCollection>>;
+    all(input?: RelicCollectionInput, options?: RequestOptions): Promise<DataResult<Relic[]>>;
     // (undocumented)
+    collection(input?: RelicCollectionInput, options?: RequestOptions): Promise<DataResult<RelicCollection>>;
+    // @deprecated (undocumented)
     feed(input?: RelicFeedInput, options?: RequestOptions): Promise<DataResult<Page<Relic, bigint>>>;
     // (undocumented)
     get(tokenId: bigint, options?: RelicRequestOptions): Promise<DataResult<Relic>>;
@@ -1729,6 +1851,8 @@ export interface RelicsRepository {
     owned(owner: Address, options?: RequestOptions): Promise<DataResult<OwnedRelicsPage>>;
     // (undocumented)
     owner(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Address>>;
+    // (undocumented)
+    page(input?: RelicFeedInput, options?: RequestOptions): Promise<DataResult<Page<Relic, bigint>>>;
     // (undocumented)
     stats(filter?: RelicStatsFilter, options?: RequestOptions): Promise<DataResult<RelicCollectionStats>>;
 }
@@ -1856,6 +1980,14 @@ export interface RequestBudget extends TraversalLimits {
 }
 
 // @public (undocumented)
+export interface RequestCoalescer {
+    // (undocumented)
+    run<T>(key: string, signal: AbortSignal | undefined, task: (signal: AbortSignal) => Promise<T>): Promise<T>;
+    // (undocumented)
+    readonly size: number;
+}
+
+// @public (undocumented)
 export interface RequestOptions {
     // (undocumented)
     signal?: AbortSignal;
@@ -1909,6 +2041,9 @@ export interface RpcTransport {
     // (undocumented)
     request<T>(method: string, params?: readonly unknown[] | Record<string, unknown>, options?: RequestOptions): Promise<TransportResult<T>>;
 }
+
+// @public (undocumented)
+export type RuntimeSource = "rpc" | "torii" | "metadata";
 
 // @public (undocumented)
 export function sameAddress(left: string, right: string): boolean;
@@ -2057,13 +2192,31 @@ export interface SourceAttempt {
 }
 
 // @public (undocumented)
-export interface StarknetCall {
+export interface SourceStatus {
     // (undocumented)
-    calldata: string[];
+    consecutiveFailures: number;
     // (undocumented)
-    contractAddress: Address;
+    lastErrorCode?: string | undefined;
     // (undocumented)
-    entrypoint: string;
+    lastFailureAt?: number | undefined;
+    // (undocumented)
+    lastSuccessAt?: number | undefined;
+    // (undocumented)
+    retryAt?: number | undefined;
+    // (undocumented)
+    source: RuntimeSource;
+    // (undocumented)
+    state: CircuitState;
+}
+
+// @public (undocumented)
+export interface SourceStatusRegistry {
+    // (undocumented)
+    get(source: RuntimeSource): Readonly<SourceStatus>;
+    // (undocumented)
+    snapshot(): Readonly<Record<RuntimeSource, Readonly<SourceStatus>>>;
+    // (undocumented)
+    subscribe(listener: (status: Readonly<SourceStatus>) => void): () => void;
 }
 
 // @public (undocumented)

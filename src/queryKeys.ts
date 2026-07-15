@@ -1,5 +1,6 @@
 import { normalizeAddress } from "./codecs.js";
 import type { AnalyticsSummaryFilter } from "./analyticsSummary.js";
+import type { EventRef } from "./aggregates.js";
 import type { RelicCollectionInput, RelicFeedInput } from "./relics.js";
 import type { RelicStatsFilter } from "./relicStats.js";
 import type { Address, CageCallsQueryKey } from "./types.js";
@@ -18,6 +19,9 @@ export const cageCallsQueryKeys = Object.freeze({
   fightFeed: (input?: { limit?: number; cursor?: bigint; viewer?: Address }) => key("fight-feed", input?.limit ?? "default", input?.cursor?.toString() ?? "start", input?.viewer ? normalizeAddress(input.viewer) : "none"),
   fightBuys: (fightId: bigint, input?: { offset?: number; limit?: number }) => key("fight-buys", fightId.toString(), input?.offset ?? 0, input?.limit ?? "default"),
   fightEvents: (input?: { limit?: number; cursor?: bigint; viewer?: Address; now?: bigint }) => key("fight-events", input?.limit ?? "default", input?.cursor?.toString() ?? "start", input?.viewer ? normalizeAddress(input.viewer) : "none", input?.now?.toString() ?? "clock"),
+  event: (ref: EventRef) => key("event", ref.seasonId.toString(), ref.eventName),
+  accountEvent: (account: Address, ref: EventRef) => key("account-event", normalizeAddress(account), ref.seasonId.toString(), ref.eventName),
+  accountPortfolio: (account: Address) => key("account-portfolio", normalizeAddress(account)),
   portfolio: (account: Address, input?: { limit?: number; cursor?: string }) => key("portfolio", normalizeAddress(account), input?.limit ?? "default", input?.cursor ?? "start"),
   markets: (input?: { limit?: number; cursor?: string }) => key("markets", input?.limit ?? "default", input?.cursor ?? "start"),
   market: (marketId: bigint) => key("market", marketId.toString()),

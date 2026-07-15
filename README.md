@@ -1,10 +1,10 @@
 # Cage Calls SDK
 
 Framework-neutral TypeScript access to Cage Calls deployments. The core package owns reads,
-decoding, source fallbacks, validation, and typed call construction. It never owns a wallet,
-signs a transaction, or waits for a receipt.
+decoding, source fallbacks, validation, aggregation, and typed live-update boundaries. It never
+owns a wallet, constructs a transaction, signs a transaction, or waits for a receipt.
 
-> Status: `0.1.0-next.12`. The API and deployment presets are canary-grade until the production
+> Status: `0.2.0-next.0`. The API and deployment presets are canary-grade until the production
 > client migration and network smoke tests are complete.
 
 ## Install
@@ -48,7 +48,7 @@ const client = createCageCallsClient({
   },
 });
 
-const fights = await client.fightEvents.list({ limit: 20 });
+const fights = await client.fightEvents.page({ limit: 20 });
 console.log(fights.data, fights.meta);
 ```
 
@@ -63,6 +63,12 @@ reconstructs missing or incomplete indexed pages when the deployment exposes the
 and pagination views. The configured primary RPC (for example Alchemy) is tried before the
 Cartridge RPC transport fallback. Cartridge is therefore RPC failover, not a separate index.
 IPFS gateways are used only for optional external NFT metadata hydration.
+
+Identical concurrent reads are coalesced while they are in flight. Completed results are never
+cached by the core SDK. Each source has a passive circuit breaker driven only by transient request
+failures (rate limits, timeouts, network errors, and server errors); the SDK never sends background
+health probes. Inspect `client.sources.snapshot()` or subscribe to `client.sources` to expose the
+current RPC, Torii, and metadata source state in application diagnostics.
 
 Default traversal budgets allow up to 100,000 Torii items (1,000 pages) and 100,000 RPC items
 (500 pages). They are safety ceilings rather than result limits: a read that reaches one returns
@@ -90,19 +96,13 @@ Contract-defined page sizes are still respected. Repositories iterate those page
 views, and stop early only when the source proves exhaustion or an authoritative count/balance
 has been satisfied.
 
-## Reads and call plans
+## Read-only domain client
 
-The client exposes `fighters`, `fights`, `fightEvents`, `markets`, `relics`, `gacha`, `tokens`,
-`activity`, and `admin` repositories. Mutations are constructed separately:
-
-```ts
-const plan = client.calls.gacha.strike(42n, accountAddress);
-// Pass plan.calls to the wallet/controller owned by the application.
-// On success, invalidate plan.invalidate in the application cache.
-```
-
-Composite plans describe Controller, VRF, and token-approval requirements without executing
-them. Receipt-dependent operations are deliberately separate plans.
+The client exposes `fighters`, `fights`, `fightEvents`, `events`, `accounts`, `markets`,
+`relics`, `gacha`, `tokens`, `activity`, `analytics`, and `admin` repositories. Every collection
+repository provides explicit `page()` and exhaustive `all()` reads where the protocol can prove
+exhaustion. Transaction encoding, signing, Controller policy, receipt handling, and cache
+invalidation belong to the consuming application.
 
 ## React Query
 
@@ -121,20 +121,9 @@ function Events() {
 // Nest CageCallsProvider below your QueryClientProvider.
 ```
 
-Hooks do not poll on window focus by default. Use the exported query-key factories and
-`invalidateCallPlan` after application-owned transaction confirmation.
-
-## Cartridge
-
-```ts
-import { controllerChain, sessionPoliciesForCalls } from "@medieval-tech/cage-calls-sdk/cartridge";
-
-const chain = controllerChain(client.network);
-const policies = sessionPoliciesForCalls(plan.calls);
-```
-
-These helpers only produce structural chain and policy configuration. Controller login,
-account selection, signing, VRF routing, execution, and receipt waiting remain application-owned.
+Hooks do not poll on window focus by default. `useCageCallsLive()` consumes an optional typed
+Torii subscription adapter and invalidates affected React Query keys. After a reconnect it emits
+one reconciliation invalidation; it never starts a polling loop.
 
 ## Custom networks and Katana
 

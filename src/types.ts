@@ -45,22 +45,6 @@ export interface Page<T, Cursor = string> {
 
 export type CageCallsQueryKey = readonly ["cage-calls", string, ...readonly unknown[]];
 
-export interface StarknetCall {
-  contractAddress: Address;
-  entrypoint: string;
-  calldata: string[];
-}
-
-export interface CallPlan {
-  calls: StarknetCall[];
-  invalidate: CageCallsQueryKey[];
-  requirements?: {
-    controller?: boolean;
-    vrf?: boolean;
-    tokenApproval?: boolean;
-  };
-}
-
 export type NetworkName = "mainnet" | "sepolia-dev" | "sepolia-staging";
 
 export type ContractName =

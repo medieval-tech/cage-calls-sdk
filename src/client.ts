@@ -1,7 +1,7 @@
 import { createActivityRepository, type ActivityRepository } from "./activity.js";
+import { createAggregateRepositories, type AccountsRepository, type EventsRepository } from "./aggregates.js";
 import { createAdminRepository, type AdminRepository } from "./admin.js";
 import { createAnalyticsRepository, type AnalyticsRepository } from "./analytics.js";
-import { createCallBuilders, type CageCallsCallBuilders } from "./calls.js";
 import { resolveBudget } from "./core.js";
 import { ConfigurationError } from "./errors.js";
 import { createCapabilityRegistry, resolveNetwork, type CapabilityRegistry } from "./network.js";
@@ -21,6 +21,15 @@ import {
   type TokensRepository,
 } from "./repositories.js";
 import { createRelicsRepository, type RelicsRepository } from "./relics.js";
+import {
+  createResilientMetadataTransport,
+  createResilientRpcTransport,
+  createResilientToriiTransport,
+  createSourceStatusRegistry,
+  type PassiveCircuitOptions,
+  type SourceStatusRegistry,
+} from "./resilience.js";
+import { createLiveRepository, type CageCallsLiveTransport, type LiveRepository } from "./live.js";
 import type { MetadataTransport, RpcTransport, ToriiTransport } from "./transports.js";
 import type { CageCallsNetwork, NetworkName, RequestBudget, SdkLogger } from "./types.js";
 
@@ -28,6 +37,7 @@ export interface CageCallsTransports {
   rpc: RpcTransport;
   torii?: ToriiTransport;
   metadata?: MetadataTransport;
+  live?: CageCallsLiveTransport;
 }
 
 export interface CreateCageCallsClientOptions {
@@ -36,6 +46,7 @@ export interface CreateCageCallsClientOptions {
   logger?: SdkLogger;
   budget?: Partial<RequestBudget>;
   now?: () => number;
+  resilience?: PassiveCircuitOptions | false;
 }
 
 export interface CageCallsClient {
@@ -45,24 +56,38 @@ export interface CageCallsClient {
   readonly fighters: FightersRepository;
   readonly fights: FightsRepository;
   readonly fightEvents: FightEventsRepository;
+  readonly events: EventsRepository;
+  readonly accounts: AccountsRepository;
   readonly markets: MarketsRepository;
   readonly relics: RelicsRepository;
   readonly gacha: GachaRepository;
   readonly tokens: TokensRepository;
   readonly activity: ActivityRepository;
   readonly admin: AdminRepository;
-  readonly calls: CageCallsCallBuilders;
+  readonly sources: SourceStatusRegistry;
+  readonly live: LiveRepository;
 }
 
 export function createCageCallsClient(options: CreateCageCallsClientOptions): CageCallsClient {
   if (!options.transports?.rpc) throw new ConfigurationError("An RPC transport is required.");
   const network = resolveNetwork(options.network);
   const budget = resolveBudget(options.budget);
-  const capabilities = createCapabilityRegistry(network, options.transports.rpc);
+  const sources = createSourceStatusRegistry();
+  const resilience = options.resilience === false ? undefined : { ...options.resilience, now: options.now ?? Date.now };
+  const rpc = resilience
+    ? createResilientRpcTransport(options.transports.rpc, sources, resilience)
+    : options.transports.rpc;
+  const torii = options.transports.torii && resilience
+    ? createResilientToriiTransport(options.transports.torii, sources, resilience)
+    : options.transports.torii;
+  const metadata = options.transports.metadata && resilience
+    ? createResilientMetadataTransport(options.transports.metadata, sources, resilience)
+    : options.transports.metadata;
+  const capabilities = createCapabilityRegistry(network, rpc);
   const context: RepositoryContext = {
     network,
-    rpc: options.transports.rpc,
-    ...(options.transports.torii ? { torii: options.transports.torii } : {}),
+    rpc,
+    ...(torii ? { torii } : {}),
     capabilities,
     budget,
     now: options.now ?? Date.now,
@@ -70,6 +95,12 @@ export function createCageCallsClient(options: CreateCageCallsClientOptions): Ca
   };
   const tokens = createTokensRepository(context);
   const fights = createFightsRepository(context);
+  const gacha = createGachaRepository(context, tokens);
+  const relics = createRelicsRepository({
+    ...context,
+    ...(metadata ? { metadata } : {}),
+  });
+  const aggregates = createAggregateRepositories(context, { fights, gacha, relics, tokens });
   return Object.freeze({
     network,
     capabilities,
@@ -77,15 +108,15 @@ export function createCageCallsClient(options: CreateCageCallsClientOptions): Ca
     fighters: createFightersRepository(context),
     fights,
     fightEvents: createFightEventsRepository(context, fights),
+    events: aggregates.events,
+    accounts: aggregates.accounts,
     markets: createMarketsRepository(context),
-    relics: createRelicsRepository({
-      ...context,
-      ...(options.transports.metadata ? { metadata: options.transports.metadata } : {}),
-    }),
-    gacha: createGachaRepository(context, tokens),
+    relics,
+    gacha,
     tokens,
     activity: createActivityRepository(context),
     admin: createAdminRepository(context),
-    calls: createCallBuilders(network),
+    sources,
+    live: createLiveRepository(options.transports.live),
   });
 }

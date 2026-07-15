@@ -108,6 +108,9 @@ const VAULT_DENOMINATOR_SELECTION = ["market_id", "value"] as const;
 export interface FightersRepository {
   get(fighterId: bigint, options?: RequestOptions): Promise<DataResult<Fighter>>;
   getMany(fighterIds: readonly bigint[], options?: RequestOptions): Promise<DataResult<Fighter[]>>;
+  all(input?: { active?: boolean }, options?: RequestOptions): Promise<DataResult<Fighter[]>>;
+  page(input?: { active?: boolean; limit?: number; cursor?: string }, options?: RequestOptions): Promise<DataResult<Page<Fighter>>>;
+  /** @deprecated Use page(). */
   list(input?: { active?: boolean; limit?: number; cursor?: string }, options?: RequestOptions): Promise<DataResult<Page<Fighter>>>;
   isAdmin(account: Address, options?: RequestOptions): Promise<DataResult<boolean>>;
 }
@@ -143,6 +146,27 @@ export function createFightersRepository(context: RepositoryContext): FightersRe
     }
   };
 
+  const page = async (input: { active?: boolean; limit?: number; cursor?: string } = {}, options: RequestOptions = {}) => {
+    const startedAt = context.now();
+    if (!context.torii) throw new UnsupportedCapabilityError("fighter enumeration without Torii");
+    try {
+      const response = await context.torii.model<Record<string, unknown>>({
+        model: "Fighter",
+        selection: FIGHTER_SELECTION,
+        first: clampPageSize(input.limit, context.budget.pageSize, 20),
+        ...(input.cursor ? { after: input.cursor } : {}),
+        ...(input.active === undefined ? {} : { where: { active: input.active } }),
+      }, options);
+      return result(context, startedAt, "torii", {
+        items: response.data.edges.map((edge) => mapToriiFighter(edge.node)),
+        ...(response.data.pageInfo.endCursor ? { cursor: response.data.pageInfo.endCursor } : {}),
+        hasMore: response.data.pageInfo.hasNextPage,
+      }, response.attempts);
+    } catch (error) {
+      throw new AllSourcesFailedError("fighters.page", transportAttemptsFromError(error));
+    }
+  };
+
   return {
     get,
     async getMany(fighterIds, options = {}) {
@@ -173,26 +197,22 @@ export function createFightersRepository(context: RepositoryContext): FightersRe
         values.flatMap((value) => value.meta.warnings),
       );
     },
-    async list(input = {}, options = {}) {
+    async all(input = {}, options = {}) {
       const startedAt = context.now();
       if (!context.torii) throw new UnsupportedCapabilityError("fighter enumeration without Torii");
       try {
-        const response = await context.torii.model<Record<string, unknown>>({
+        const response = await readAllToriiModels(context, {
           model: "Fighter",
           selection: FIGHTER_SELECTION,
-          first: clampPageSize(input.limit, context.budget.pageSize, 20),
-          ...(input.cursor ? { after: input.cursor } : {}),
           ...(input.active === undefined ? {} : { where: { active: input.active } }),
-        }, options);
-        return result(context, startedAt, "torii", {
-          items: response.data.edges.map((edge) => mapToriiFighter(edge.node)),
-          ...(response.data.pageInfo.endCursor ? { cursor: response.data.pageInfo.endCursor } : {}),
-          hasMore: response.data.pageInfo.hasNextPage,
-        }, response.attempts);
+        }, mapToriiFighter, options);
+        return result(context, startedAt, "torii", response.items, response.attempts, response.complete, response.warnings);
       } catch (error) {
-        throw new AllSourcesFailedError("fighters.list", transportAttemptsFromError(error));
+        throw new AllSourcesFailedError("fighters.all", transportAttemptsFromError(error));
       }
     },
+    page,
+    list: page,
     async isAdmin(account, options = {}) {
       const startedAt = context.now();
       const response = await rpcCall(context, "FighterRegistry", "is_admin", [normalizeAddress(account)], options);
@@ -203,13 +223,19 @@ export function createFightersRepository(context: RepositoryContext): FightersRe
 
 export interface FightsRepository {
   get(fightId: bigint, options?: RequestOptions): Promise<DataResult<Fight>>;
+  all(input?: { seasonId?: bigint }, options?: RequestOptions): Promise<DataResult<Fight[]>>;
+  page(input?: { limit?: number; cursor?: string; seasonId?: bigint }, options?: RequestOptions): Promise<DataResult<Page<Fight>>>;
+  /** @deprecated Use page(). */
   list(input?: { limit?: number; cursor?: string; seasonId?: bigint }, options?: RequestOptions): Promise<DataResult<Page<Fight>>>;
   feed(input?: { limit?: number; cursor?: bigint; viewer?: Address }, options?: RequestOptions): Promise<DataResult<Page<FightFeedItem, bigint>>>;
+  feedAll(input?: { viewer?: Address }, options?: RequestOptions): Promise<DataResult<FightFeedItem[]>>;
   buys(fightId: bigint, input?: { offset?: number; limit?: number }, options?: RequestOptions): Promise<DataResult<Page<FightBuy, number>>>;
+  buysAll(fightId: bigint, options?: RequestOptions): Promise<DataResult<FightBuy[]>>;
   viewerState(fightId: bigint, viewer: Address, options?: RequestOptions): Promise<DataResult<FightViewerState>>;
   potState(fightId: bigint, options?: RequestOptions): Promise<DataResult<FightPotState>>;
   winner(fightId: bigint, account: Address, options?: RequestOptions): Promise<DataResult<FightWinner | undefined>>;
   portfolio(account: Address, input?: { limit?: number; cursor?: string }, options?: RequestOptions): Promise<DataResult<Page<FightBuy>>>;
+  portfolioAll(account: Address, options?: RequestOptions): Promise<DataResult<FightBuy[]>>;
 }
 
 export function createFightsRepository(context: RepositoryContext): FightsRepository {
@@ -265,7 +291,95 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
 
   return {
     get,
+    async all(input = {}, options = {}) {
+      const startedAt = context.now();
+      const attempts: SourceAttempt[] = [];
+      const warnings: DataWarning[] = [];
+      if (context.torii) {
+        try {
+          const response = await readAllToriiModels(context, {
+            model: "Fight",
+            selection: FIGHT_SELECTION,
+            ...(input.seasonId === undefined ? {} : { where: { season_idEQ: normalizeFelt(input.seasonId) } }),
+          }, mapToriiFight, options);
+          return result(context, startedAt, "torii", response.items.sort((a, b) => a.createdAt === b.createdAt ? 0 : a.createdAt > b.createdAt ? -1 : 1), response.attempts, response.complete, response.warnings);
+        } catch (error) {
+          attempts.push(...transportAttemptsFromError(error));
+          warnings.push({ code: "TORII_UNAVAILABLE", message: "Fight enumeration fell back to aggregate RPC pages.", source: "torii" });
+        }
+      }
+      const supportsFeed = context.capabilities.has("fightFeed") || await context.capabilities.probe("fightFeed", options.signal);
+      if (supportsFeed) {
+        const response = await createFightsRepository(context).feedAll({}, options);
+        attempts.push(...response.meta.attempts);
+        warnings.push(...response.meta.warnings);
+        const items = response.data
+          .filter((fight) => input.seasonId === undefined || fight.seasonId === input.seasonId)
+          .sort((a, b) => a.createdAt === b.createdAt ? 0 : a.createdAt > b.createdAt ? -1 : 1);
+        return result(context, startedAt, "starknet-rpc", items, attempts, response.meta.complete, warnings);
+      }
+      const budget = resolveRequestBudget(context.budget, options);
+      const next = await rpcCall(context, "FightFactory", "next_fight_id", [], options).catch((error) => {
+        throw new AllSourcesFailedError("fights.all", [...attempts, ...transportAttemptsFromError(error)]);
+      });
+      attempts.push(...next.attempts);
+      const nextId = decodeSingleU256(next.data, "nextFightId");
+      const ids: bigint[] = [];
+      for (let id = 1n; id < nextId && ids.length < budget.maxRpcItems; id += 1n) ids.push(id);
+      const values = await mapConcurrent(ids, context.budget.maxConcurrency, (id) => get(id, options));
+      attempts.push(...values.flatMap((value) => value.meta.attempts));
+      const items = values.map((value) => value.data)
+        .filter((fight) => input.seasonId === undefined || fight.seasonId === input.seasonId)
+        .sort((a, b) => a.createdAt === b.createdAt ? 0 : a.createdAt > b.createdAt ? -1 : 1);
+      const complete = BigInt(ids.length) === (nextId > 0n ? nextId - 1n : 0n);
+      if (!complete) warnings.push({ code: "RPC_ITEM_LIMIT", message: `Fight enumeration reached the ${budget.maxRpcItems} item budget.`, source: "starknet-rpc" });
+      return result(context, startedAt, "starknet-rpc", items, attempts, complete, warnings);
+    },
+    page: list,
     list,
+    async feedAll(input = {}, options = {}) {
+      const startedAt = context.now();
+      const budget = resolveRequestBudget(context.budget, options);
+      const items: FightFeedItem[] = [];
+      const attempts: SourceAttempt[] = [];
+      const warnings: DataWarning[] = [];
+      const seen = new Set<string>();
+      let cursor = 0n;
+      let exhausted = false;
+      let complete = true;
+      for (let pageIndex = 0; pageIndex < budget.maxRpcPages && items.length < budget.maxRpcItems; pageIndex += 1) {
+        const response = await createFightsRepository(context).feed({
+          ...input,
+          cursor,
+          limit: Math.min(20, budget.maxRpcItems - items.length),
+        }, options);
+        items.push(...response.data.items);
+        attempts.push(...response.meta.attempts);
+        warnings.push(...response.meta.warnings);
+        complete &&= response.meta.complete;
+        if (!response.data.hasMore) { exhausted = true; break; }
+        const next = response.data.cursor ?? 0n;
+        const key = next.toString();
+        if (seen.has(key) || next === cursor) {
+          warnings.push({ code: "RPC_CURSOR_STALLED", message: `Fight feed pagination stopped at repeated cursor ${next}.`, source: "starknet-rpc" });
+          complete = false;
+          break;
+        }
+        seen.add(key);
+        cursor = next;
+      }
+      if (!exhausted) {
+        complete = false;
+        warnings.push({
+          code: items.length >= budget.maxRpcItems ? "RPC_ITEM_LIMIT" : "RPC_PAGE_LIMIT",
+          message: items.length >= budget.maxRpcItems
+            ? `Fight feed enumeration reached the ${budget.maxRpcItems} item budget.`
+            : `Fight feed enumeration reached the ${budget.maxRpcPages} page budget.`,
+          source: "starknet-rpc",
+        });
+      }
+      return result(context, startedAt, "starknet-rpc", items, attempts, complete && exhausted, warnings);
+    },
     async feed(input = {}, options = {}) {
       const startedAt = context.now();
       const supported = context.capabilities.has("fightFeed") || await context.capabilities.probe("fightFeed", options.signal);
@@ -396,6 +510,43 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
         source: "torii",
       }] : []);
     },
+    async buysAll(fightId, options = {}) {
+      const startedAt = context.now();
+      const attempts: SourceAttempt[] = [];
+      const warnings: DataWarning[] = [];
+      if (context.torii) {
+        try {
+          const response = await readAllToriiModels(context, {
+            model: "FightBuy",
+            selection: FIGHT_BUY_SELECTION,
+            where: { fight_idEQ: normalizeFelt(fightId) },
+          }, mapToriiFightBuy, options);
+          return result(context, startedAt, "torii", response.items, response.attempts, response.complete, response.warnings);
+        } catch (error) {
+          attempts.push(...transportAttemptsFromError(error));
+          warnings.push({ code: "TORII_UNAVAILABLE", message: "Fight buy enumeration fell back to aggregate RPC pages.", source: "torii" });
+        }
+      }
+      const supported = context.capabilities.has("fightBuyPagination") || await context.capabilities.probe("fightBuyPagination", options.signal);
+      if (!supported) throw new UnsupportedCapabilityError("fight buy exhaustive enumeration");
+      const budget = resolveRequestBudget(context.budget, options);
+      const count = await rpcCall(context, "FightFactory", "fight_buy_count", encodeU256(fightId), options);
+      attempts.push(...count.attempts);
+      const total = decodeSingleNumber(count.data, "fightBuyCount");
+      const items: FightBuy[] = [];
+      for (let offset = 0, pageIndex = 0; offset < total && pageIndex < budget.maxRpcPages && items.length < budget.maxRpcItems; pageIndex += 1) {
+        const size = Math.min(100, total - offset, budget.maxRpcItems - items.length);
+        const response = await rpcCall(context, "FightFactory", "get_fight_buys", [...encodeU256(fightId), offset.toString(), size.toString()], options);
+        attempts.push(...response.attempts);
+        const pageItems = decodeFightBuysRpc(response.data);
+        items.push(...pageItems);
+        if (pageItems.length === 0) break;
+        offset += pageItems.length;
+      }
+      const complete = items.length >= total;
+      if (!complete) warnings.push({ code: "RPC_TRAVERSAL_LIMIT", message: `Fight buy enumeration returned ${items.length} of ${total} records.`, source: "starknet-rpc" });
+      return result(context, startedAt, "starknet-rpc", items, attempts, complete, warnings);
+    },
     async viewerState(fightId, viewer, options = {}) {
       const startedAt = context.now();
       const calldata = [...encodeU256(fightId), normalizeAddress(viewer)];
@@ -460,11 +611,24 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
         hasMore: response.data.pageInfo.hasNextPage,
       }, response.attempts);
     },
+    async portfolioAll(account, options = {}) {
+      const startedAt = context.now();
+      if (!context.torii) throw new UnsupportedCapabilityError("portfolio enumeration without Torii");
+      const response = await readAllToriiModels(context, {
+        model: "FightBuy",
+        selection: FIGHT_BUY_SELECTION,
+        where: { buyerEQ: normalizeAddress(account) },
+      }, mapToriiFightBuy, options);
+      return result(context, startedAt, "torii", response.items, response.attempts, response.complete, response.warnings);
+    },
   };
 }
 
 export interface MarketsRepository {
   get(marketId: bigint, options?: RequestOptions): Promise<DataResult<Market>>;
+  all(options?: RequestOptions): Promise<DataResult<Market[]>>;
+  page(input?: { limit?: number; cursor?: string }, options?: RequestOptions): Promise<DataResult<Page<Market>>>;
+  /** @deprecated Use page(). */
   list(input?: { limit?: number; cursor?: string }, options?: RequestOptions): Promise<DataResult<Page<Market>>>;
   catalog(input?: { limit?: number; cursor?: string }, options?: RequestOptions): Promise<DataResult<Page<MarketCatalogItem>>>;
   state(marketId: bigint, outcomeSlotCount: number, conditionId?: bigint, options?: RequestOptions): Promise<DataResult<MarketState>>;
@@ -479,23 +643,32 @@ export function createMarketsRepository(context: RepositoryContext): MarketsRepo
     return result(context, startedAt, "starknet-rpc", decodeMarketRpc(response.data), response.attempts);
   };
 
+  const page = async (input: { limit?: number; cursor?: string } = {}, options: RequestOptions = {}) => {
+    const startedAt = context.now();
+    if (!context.torii) throw new UnsupportedCapabilityError("market enumeration without Torii");
+    const response = await context.torii.model<Record<string, unknown>>({
+      model: "Market",
+      selection: MARKET_SELECTION,
+      first: clampPageSize(input.limit, context.budget.pageSize, 20),
+      ...(input.cursor ? { after: input.cursor } : {}),
+    }, options);
+    return result(context, startedAt, "torii", {
+      items: response.data.edges.map((edge) => mapToriiMarket(edge.node)),
+      ...(response.data.pageInfo.endCursor ? { cursor: response.data.pageInfo.endCursor } : {}),
+      hasMore: response.data.pageInfo.hasNextPage,
+    }, response.attempts);
+  };
+
   return {
     get,
-    async list(input = {}, options = {}) {
+    async all(options = {}) {
       const startedAt = context.now();
       if (!context.torii) throw new UnsupportedCapabilityError("market enumeration without Torii");
-      const response = await context.torii.model<Record<string, unknown>>({
-        model: "Market",
-        selection: MARKET_SELECTION,
-        first: clampPageSize(input.limit, context.budget.pageSize, 20),
-        ...(input.cursor ? { after: input.cursor } : {}),
-      }, options);
-      return result(context, startedAt, "torii", {
-        items: response.data.edges.map((edge) => mapToriiMarket(edge.node)),
-        ...(response.data.pageInfo.endCursor ? { cursor: response.data.pageInfo.endCursor } : {}),
-        hasMore: response.data.pageInfo.hasNextPage,
-      }, response.attempts);
+      const response = await readAllToriiModels(context, { model: "Market", selection: MARKET_SELECTION }, mapToriiMarket, options);
+      return result(context, startedAt, "torii", response.items, response.attempts, response.complete, response.warnings);
     },
+    page,
+    list: page,
     async catalog(input = {}, options = {}) {
       const startedAt = context.now();
       if (!context.torii) throw new UnsupportedCapabilityError("market catalog without Torii");
@@ -643,6 +816,7 @@ export interface GachaRepository {
   pool(fightId: bigint, options?: RequestOptions): Promise<DataResult<GachaPoolState>>;
   user(fightId: bigint, account: Address, options?: RequestOptions): Promise<DataResult<GachaUserState>>;
   availableTokenIds(fightId: bigint, input?: { cursor?: bigint; limit?: number }, options?: RequestOptions): Promise<DataResult<Page<bigint, bigint>>>;
+  availableTokenIdsAll(fightId: bigint, options?: RequestOptions): Promise<DataResult<bigint[]>>;
   isAdmin(account: Address, options?: RequestOptions): Promise<DataResult<boolean>>;
   vrfAddress(options?: RequestOptions): Promise<DataResult<Address>>;
 }
@@ -734,6 +908,30 @@ export function createGachaRepository(context: RepositoryContext, tokens: Tokens
         source: "starknet-rpc",
       }]);
     },
+    async availableTokenIdsAll(fightId, options = {}) {
+      const startedAt = context.now();
+      const budget = resolveRequestBudget(context.budget, options);
+      const attempts: SourceAttempt[] = [];
+      const warnings: DataWarning[] = [];
+      const items: bigint[] = [];
+      let cursor = 0n;
+      let exhausted = false;
+      for (let pageIndex = 0; pageIndex < budget.maxRpcPages && items.length < budget.maxRpcItems; pageIndex += 1) {
+        const response = await createGachaRepository(context, tokens).availableTokenIds(fightId, { cursor, limit: Math.min(100, budget.maxRpcItems - items.length) }, options);
+        attempts.push(...response.meta.attempts);
+        warnings.push(...response.meta.warnings);
+        items.push(...response.data.items);
+        if (!response.data.hasMore) { exhausted = true; break; }
+        const next = response.data.cursor ?? cursor;
+        if (next === cursor || response.data.items.length === 0) {
+          warnings.push({ code: "RPC_CURSOR_STALLED", message: `Gacha token pagination stopped at cursor ${cursor}.`, source: "starknet-rpc" });
+          break;
+        }
+        cursor = next;
+      }
+      if (!exhausted) warnings.push({ code: "RPC_TRAVERSAL_LIMIT", message: "Gacha token enumeration stopped before source exhaustion.", source: "starknet-rpc" });
+      return result(context, startedAt, "starknet-rpc", items, attempts, exhausted, warnings);
+    },
     async isAdmin(account, options = {}) {
       const startedAt = context.now();
       const response = await rpcCall(context, "Gacha", "is_admin", [normalizeAddress(account)], options);
@@ -750,41 +948,47 @@ export function createGachaRepository(context: RepositoryContext, tokens: Tokens
 }
 
 export interface FightEventsRepository {
+  all(input?: { viewer?: Address; now?: bigint }, options?: RequestOptions): Promise<DataResult<FightEvent[]>>;
+  page(input?: { limit?: number; cursor?: bigint; viewer?: Address; now?: bigint }, options?: RequestOptions): Promise<DataResult<Page<FightEvent, bigint>>>;
+  /** @deprecated Use page(). */
   list(input?: { limit?: number; cursor?: bigint; viewer?: Address; now?: bigint }, options?: RequestOptions): Promise<DataResult<Page<FightEvent, bigint>>>;
 }
 
 export function createFightEventsRepository(context: RepositoryContext, fights: FightsRepository): FightEventsRepository {
+  const group = (items: FightFeedItem[], now: bigint): FightEvent[] => {
+    const groups = new Map<string, FightFeedItem[]>();
+    for (const fight of items) {
+      const key = `${fight.seasonId}:${fight.eventName}`;
+      groups.set(key, [...(groups.get(key) ?? []), fight]);
+    }
+    return Array.from(groups.values()).map((eventFights): FightEvent => {
+      const states = new Set(eventFights.map((fight) => {
+        if (fight.pot.settled) return "settled" as const;
+        if (fight.pot.closed || now >= fight.endAt) return "closed" as const;
+        if (now >= fight.startAt) return "open" as const;
+        return "upcoming" as const;
+      }));
+      const first = eventFights[0];
+      if (!first) throw new ValidationError("Fight event group is empty.");
+      return { seasonId: first.seasonId, eventName: first.eventName, fights: eventFights, lifecycle: states.size === 1 ? (states.values().next().value ?? "mixed") : "mixed" };
+    });
+  };
+  const page = async (input: { limit?: number; cursor?: bigint; viewer?: Address; now?: bigint } = {}, options: RequestOptions = {}) => {
+    const startedAt = context.now();
+    const response = await fights.feed(input, options);
+    return result(context, startedAt, "derived", {
+      items: group(response.data.items, input.now ?? BigInt(Math.floor(context.now() / 1_000))),
+      ...(response.data.cursor === undefined ? {} : { cursor: response.data.cursor }),
+      hasMore: response.data.hasMore,
+    }, response.meta.attempts, response.meta.complete, response.meta.warnings);
+  };
   return {
-    async list(input = {}, options = {}) {
+    async all(input = {}, options = {}) {
       const startedAt = context.now();
-      const page = await fights.feed(input, options);
-      const groups = new Map<string, FightFeedItem[]>();
-      for (const fight of page.data.items) {
-        const key = `${fight.seasonId}:${fight.eventName}`;
-        groups.set(key, [...(groups.get(key) ?? []), fight]);
-      }
-      const now = input.now ?? BigInt(Math.floor(context.now() / 1_000));
-      const events = Array.from(groups.values()).map((items): FightEvent => {
-        const states = new Set(items.map((fight) => {
-          if (fight.pot.settled) return "settled" as const;
-          if (fight.pot.closed || now >= fight.endAt) return "closed" as const;
-          if (now >= fight.startAt) return "open" as const;
-          return "upcoming" as const;
-        }));
-        const first = items[0];
-        if (!first) throw new ValidationError("Fight event group is empty.");
-        return {
-          seasonId: first.seasonId,
-          eventName: first.eventName,
-          fights: items,
-          lifecycle: states.size === 1 ? (states.values().next().value ?? "mixed") : "mixed",
-        };
-      });
-      return result(context, startedAt, "derived", {
-        items: events,
-        ...(page.data.cursor === undefined ? {} : { cursor: page.data.cursor }),
-        hasMore: page.data.hasMore,
-      }, page.meta.attempts, page.meta.complete, page.meta.warnings);
+      const response = await fights.feedAll({ ...(input.viewer ? { viewer: input.viewer } : {}) }, options);
+      return result(context, startedAt, "derived", group(response.data, input.now ?? BigInt(Math.floor(context.now() / 1_000))), response.meta.attempts, response.meta.complete, response.meta.warnings);
     },
+    page,
+    list: page,
   };
 }

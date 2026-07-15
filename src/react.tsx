@@ -1,17 +1,18 @@
-import { createContext, createElement, useContext, type ReactNode } from "react";
-import { useQuery, type QueryClient, type UseQueryOptions } from "@tanstack/react-query";
+import { createContext, createElement, useContext, useEffect, useRef, type ReactNode } from "react";
+import { useQuery, useQueryClient, type UseQueryOptions } from "@tanstack/react-query";
 
 import type { CageCallsClient } from "./client.js";
+import type { AccountEventState, AccountPortfolio, EventRef, PublicEventSnapshot } from "./aggregates.js";
 import type { AnalyticsSummaryFilter, CageCallsAnalyticsSummary } from "./analyticsSummary.js";
 import { normalizeAddress } from "./codecs.js";
 import { cageCallsQueryKeys as keys } from "./queryKeys.js";
+import type { CageCallsLiveUpdate, LiveConnectionStatus, LiveFilter } from "./live.js";
 import type { OwnedRelicsPage, RelicCollection, RelicCollectionInput, RelicFeedInput } from "./relics.js";
 import type { RelicCollectionStats, RelicStatsFilter } from "./relicStats.js";
 import type {
   Address,
   AnalyticsSnapshot,
   CageCallsActivity,
-  CallPlan,
   ContractName,
   DataResult,
   Felt,
@@ -64,7 +65,7 @@ export function useFighter(fighterId: bigint, options?: Options<DataResult<Fight
 
 export function useFighters(input: FightersInput = {}, options?: Options<DataResult<Page<Fighter>>>) {
   const client = useCageCallsClient();
-  return useQuery({ queryKey: keys.fighters(input), queryFn: ({ signal }) => client.fighters.list(input, { signal }), refetchOnWindowFocus: false, ...options });
+  return useQuery({ queryKey: keys.fighters(input), queryFn: ({ signal }) => client.fighters.page(input, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
 export function useFightersMany(fighterIds: readonly bigint[], options?: Options<DataResult<Fighter[]>>) {
@@ -84,7 +85,7 @@ export function useFight(fightId: bigint, options?: Options<DataResult<Fight>>) 
 
 export function useFights(input: FightsInput = {}, options?: Options<DataResult<Page<Fight>>>) {
   const client = useCageCallsClient();
-  return useQuery({ queryKey: keys.fights(input), queryFn: ({ signal }) => client.fights.list(input, { signal }), refetchOnWindowFocus: false, ...options });
+  return useQuery({ queryKey: keys.fights(input), queryFn: ({ signal }) => client.fights.page(input, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
 export function useFightFeed(input: FightFeedInput = {}, options?: Options<DataResult<Page<FightFeedItem, bigint>>>) {
@@ -94,7 +95,24 @@ export function useFightFeed(input: FightFeedInput = {}, options?: Options<DataR
 
 export function useFightEvents(input: FightEventsInput = {}, options?: Options<DataResult<Page<FightEvent, bigint>>>) {
   const client = useCageCallsClient();
-  return useQuery({ queryKey: keys.fightEvents(input), queryFn: ({ signal }) => client.fightEvents.list(input, { signal }), refetchOnWindowFocus: false, ...options });
+  return useQuery({ queryKey: keys.fightEvents(input), queryFn: ({ signal }) => client.fightEvents.page(input, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
+const keepComplete = <T,>(previous: DataResult<T> | undefined) => previous?.meta.complete ? previous : undefined;
+
+export function useEventSnapshot(ref: EventRef, options?: Options<DataResult<PublicEventSnapshot>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.event(ref), queryFn: ({ signal }) => client.events.get(ref, { signal }), placeholderData: keepComplete, refetchOnWindowFocus: false, ...options });
+}
+
+export function useAccountEvent(ref: EventRef, account: Address, options?: Options<DataResult<AccountEventState>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.accountEvent(account, ref), queryFn: ({ signal }) => client.accounts.event(ref, account, { signal }), placeholderData: keepComplete, refetchOnWindowFocus: false, ...options });
+}
+
+export function useAccountPortfolio(account: Address, options?: Options<DataResult<AccountPortfolio>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.accountPortfolio(account), queryFn: ({ signal }) => client.accounts.portfolio(account, { signal }), placeholderData: keepComplete, refetchOnWindowFocus: false, ...options });
 }
 
 export function useFightBuys(fightId: bigint, input: OffsetPageInput = {}, options?: Options<DataResult<Page<FightBuy, number>>>) {
@@ -129,7 +147,7 @@ export function useMarket(marketId: bigint, options?: Options<DataResult<Market>
 
 export function useMarkets(input: CursorPageInput = {}, options?: Options<DataResult<Page<Market>>>) {
   const client = useCageCallsClient();
-  return useQuery({ queryKey: keys.markets(input), queryFn: ({ signal }) => client.markets.list(input, { signal }), refetchOnWindowFocus: false, ...options });
+  return useQuery({ queryKey: keys.markets(input), queryFn: ({ signal }) => client.markets.page(input, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
 export function useMarketState(marketId: bigint, outcomeSlotCount: number, conditionId?: bigint, options?: Options<DataResult<MarketState>>) {
@@ -159,7 +177,7 @@ export function useRelicsMany(tokenIds: readonly bigint[], options?: Options<Dat
 
 export function useRelicFeed(input: RelicFeedInput = {}, options?: Options<DataResult<Page<Relic, bigint>>>) {
   const client = useCageCallsClient();
-  return useQuery({ queryKey: keys.relics(input), queryFn: ({ signal }) => client.relics.feed(input, { signal }), refetchOnWindowFocus: false, ...options });
+  return useQuery({ queryKey: keys.relics(input), queryFn: ({ signal }) => client.relics.page(input, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
 export function useRelicCollection(input: RelicCollectionInput = {}, options?: Options<DataResult<RelicCollection>>) {
@@ -239,7 +257,7 @@ export function useTokenApproval(token: "StrikeTickets" | "VaultPositions" | "Co
 
 export function useActivity(input: ActivityInput = {}, options?: Options<DataResult<Page<CageCallsActivity>>>) {
   const client = useCageCallsClient();
-  return useQuery({ queryKey: keys.activity(input), queryFn: ({ signal }) => client.activity.list(input, { signal }), refetchOnWindowFocus: false, ...options });
+  return useQuery({ queryKey: keys.activity(input), queryFn: ({ signal }) => client.activity.page(input, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
 export function useRawActivity(input: ActivityInput = {}, options?: Options<DataResult<Page<RawCageCallsEvent>>>) {
@@ -292,8 +310,52 @@ export function useOracleWinner(marketId: bigint, options?: Options<DataResult<b
   return useQuery({ queryKey: keys.admin(`oracle-winner:${marketId}`), queryFn: ({ signal }) => client.admin.oracleWinner(marketId, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
-export async function invalidateCallPlan(queryClient: QueryClient, plan: Pick<CallPlan, "invalidate">): Promise<void> {
-  await Promise.all(plan.invalidate.map((queryKey) => queryClient.invalidateQueries({ queryKey })));
+function liveInvalidationKeys(update: CageCallsLiveUpdate): readonly (readonly unknown[])[] {
+  switch (update.kind) {
+    case "fighter": return [keys.fighter(update.fighterId), keys.fighters(), keys.relicStats()];
+    case "fight": return [keys.fight(update.fightId), keys.fights(), keys.fightFeed(), keys.analytics()];
+    case "market": return [keys.market(update.marketId), keys.markets(), keys.analytics()];
+    case "relic": return [keys.relic(update.tokenId), keys.relics(), keys.relicCollection(), keys.relicStats(), ...(update.owner ? [keys.ownedRelics(update.owner), keys.accountPortfolio(update.owner)] : [])];
+    case "gacha": return [keys.gacha(update.fightId), ...(update.account ? [keys.gachaUser(update.fightId, update.account), keys.accountPortfolio(update.account)] : [])];
+    case "token-balance": return [keys.tokens(update.account), keys.accountPortfolio(update.account)];
+    case "activity": return [keys.activity(), keys.analytics()];
+    case "reconcile": return [["cage-calls"]];
+  }
+}
+
+export function useCageCallsLive(
+  filter: LiveFilter = {},
+  callbacks: { onUpdate?(update: CageCallsLiveUpdate): void; onStatus?(status: LiveConnectionStatus): void; onError?(error: unknown): void } = {},
+): boolean {
+  const client = useCageCallsClient();
+  const queryClient = useQueryClient();
+  const callbacksRef = useRef(callbacks);
+  callbacksRef.current = callbacks;
+  const kinds = filter.kinds?.join(",") ?? "all";
+  const account = filter.account ? normalizeAddress(filter.account) : "all";
+  const event = filter.event ? `${filter.event.seasonId}:${filter.event.eventName}` : "all";
+  useEffect(() => {
+    if (!client.live.available) return;
+    let active = true;
+    let unsubscribe: (() => void | Promise<void>) | undefined;
+    void client.live.subscribe(filter, {
+      update(update) {
+        if (!active) return;
+        callbacksRef.current.onUpdate?.(update);
+        for (const queryKey of liveInvalidationKeys(update)) void queryClient.invalidateQueries({ queryKey });
+      },
+      status(status) { if (active) callbacksRef.current.onStatus?.(status); },
+      error(error) { if (active) callbacksRef.current.onError?.(error); },
+    }).then((subscription) => {
+      if (!active) void subscription.unsubscribe();
+      else unsubscribe = () => subscription.unsubscribe();
+    }).catch((error) => { if (active) callbacksRef.current.onError?.(error); });
+    return () => {
+      active = false;
+      if (unsubscribe) void unsubscribe();
+    };
+  }, [client, queryClient, kinds, account, event]);
+  return client.live.available;
 }
 
 export { cageCallsQueryKeys } from "./queryKeys.js";

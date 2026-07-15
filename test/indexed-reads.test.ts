@@ -146,6 +146,24 @@ describe("Torii-first indexed reads", () => {
     expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["get_fight_feed", "fight_buy_count", "get_fight_buys"]);
   });
 
+  it("uses the aggregate fight feed for exhaustive fight fallback", async () => {
+    const rpc = createMockRpcTransport({
+      calls: {
+        get_fight_feed: encodeFightFeed([
+          { fightId: 84n, marketId: 900n },
+          { fightId: 85n, marketId: 901n },
+        ]),
+      },
+    });
+    const client = createCageCallsClient({ network: SEPOLIA_DEV_PRESET, transports: { rpc } });
+
+    const response = await client.fights.all();
+
+    expect(response.meta).toMatchObject({ source: "starknet-rpc", complete: true });
+    expect(response.data.map((item) => item.fightId)).toEqual([84n, 85n]);
+    expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["get_fight_feed"]);
+  });
+
   it("reuses an indexed fight buy group once its RPC count is verified", async () => {
     const rpc = createMockRpcTransport({ calls: { fight_buy_count: ["1"] } });
     const torii = createMockToriiTransport({

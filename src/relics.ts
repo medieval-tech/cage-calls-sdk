@@ -64,6 +64,9 @@ export interface RelicCollection {
 export interface RelicsRepository {
   get(tokenId: bigint, options?: RelicRequestOptions): Promise<DataResult<Relic>>;
   getMany(tokenIds: readonly bigint[], options?: RelicRequestOptions): Promise<DataResult<Relic[]>>;
+  all(input?: RelicCollectionInput, options?: RequestOptions): Promise<DataResult<Relic[]>>;
+  page(input?: RelicFeedInput, options?: RequestOptions): Promise<DataResult<Page<Relic, bigint>>>;
+  /** @deprecated Use page(). */
   feed(input?: RelicFeedInput, options?: RequestOptions): Promise<DataResult<Page<Relic, bigint>>>;
   collection(input?: RelicCollectionInput, options?: RequestOptions): Promise<DataResult<RelicCollection>>;
   stats(filter?: RelicStatsFilter, options?: RequestOptions): Promise<DataResult<RelicCollectionStats>>;
@@ -613,6 +616,12 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
   const repository: RelicsRepository = {
     get,
     getMany,
+    async all(input = {}, options = {}) {
+      const startedAt = context.now();
+      const collection = await repository.collection({ ...input, enrichFighters: false }, options);
+      return toResult(context, startedAt, collection.meta.source, collection.data.items, collection.meta.attempts, collection.meta.complete, collection.meta.warnings);
+    },
+    page(input = {}, options = {}) { return repository.feed(input, options); },
     async feed(input = {}, options = {}) {
       const startedAt = context.now();
       const attempts: SourceAttempt[] = [];
@@ -808,7 +817,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
           let fighterCursor: string | undefined;
           for (let page = 0; page < budget.maxToriiPages && byId.size < wanted.size; page += 1) {
             try {
-              const response = await fighterRepository.list({ limit: 20, ...(fighterCursor ? { cursor: fighterCursor } : {}) }, options);
+              const response = await fighterRepository.page({ limit: 20, ...(fighterCursor ? { cursor: fighterCursor } : {}) }, options);
               attempts.push(...response.meta.attempts);
               warnings.push(...response.meta.warnings);
               for (const fighter of response.data.items) {
@@ -837,6 +846,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
           }
         }
         fighters.push(...Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name)));
+        if (byId.size < wanted.size) complete = false;
       }
 
       return toResult(context, startedAt, source, { items, fighters, scannedCount, pageCount }, attempts, complete, warnings);

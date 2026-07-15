@@ -4,7 +4,6 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     react: "src/react.tsx",
-    cartridge: "src/cartridge.ts",
     testing: "src/testing.ts",
   },
   format: ["esm", "cjs"],

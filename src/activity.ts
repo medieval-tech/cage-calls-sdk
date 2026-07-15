@@ -1,4 +1,4 @@
-import { createDataResult } from "./core.js";
+import { createDataResult, resolveRequestBudget } from "./core.js";
 import { normalizeAddress, normalizeFelt, selectorFromName } from "./codecs.js";
 import { AllSourcesFailedError, UnsupportedCapabilityError } from "./errors.js";
 import type { RepositoryContext } from "./repositories.js";
@@ -9,6 +9,8 @@ import type {
   Page,
   RawCageCallsEvent,
   RequestOptions,
+  DataWarning,
+  SourceAttempt,
 } from "./types.js";
 
 const EVENT_TYPES = new Map<string, { name: string; type: CageCallsActivity["type"]; action?: "preparation" | "resolution" | "split" | "merge" | "redemption" }>([
@@ -87,6 +89,9 @@ export function decodeActivity(network: string, event: RawCageCallsEvent): CageC
 }
 
 export interface ActivityRepository {
+  all(input?: { keys?: string[] }, options?: RequestOptions): Promise<DataResult<CageCallsActivity[]>>;
+  page(input?: { limit?: number; cursor?: string; keys?: string[] }, options?: RequestOptions): Promise<DataResult<Page<CageCallsActivity>>>;
+  /** @deprecated Use page(). */
   list(input?: { limit?: number; cursor?: string; keys?: string[] }, options?: RequestOptions): Promise<DataResult<Page<CageCallsActivity>>>;
   raw(input?: { limit?: number; cursor?: string; keys?: string[] }, options?: RequestOptions): Promise<DataResult<Page<RawCageCallsEvent>>>;
 }
@@ -154,25 +159,62 @@ export function createActivityRepository(context: RepositoryContext): ActivityRe
     }
   };
 
+  const page = async (input: { limit?: number; cursor?: string; keys?: string[] } = {}, options: RequestOptions = {}) => {
+    const startedAt = context.now();
+    const response = await raw(input, options);
+    return createDataResult({
+      data: {
+        items: response.data.items.map((event) => decodeActivity(context.network.name, event)),
+        ...(response.data.cursor ? { cursor: response.data.cursor } : {}),
+        hasMore: response.data.hasMore,
+      },
+      source: "derived",
+      complete: response.meta.complete,
+      attempts: response.meta.attempts,
+      warnings: response.meta.warnings,
+      startedAt,
+      now: context.now,
+      ...(context.logger ? { logger: context.logger } : {}),
+    });
+  };
+
   return {
     raw,
-    async list(input = {}, options = {}) {
+    async all(input = {}, options = {}) {
       const startedAt = context.now();
-      const response = await raw(input, options);
+      const budget = resolveRequestBudget(context.budget, options);
+      const items: CageCallsActivity[] = [];
+      const attempts: SourceAttempt[] = [];
+      const warnings: DataWarning[] = [];
+      let cursor: string | undefined;
+      let exhausted = false;
+      let complete = true;
+      for (let index = 0; index < budget.maxToriiPages && items.length < budget.maxToriiItems; index += 1) {
+        const response = await page({ ...input, limit: Math.min(context.budget.pageSize, budget.maxToriiItems - items.length), ...(cursor ? { cursor } : {}) }, options);
+        items.push(...response.data.items);
+        attempts.push(...response.meta.attempts);
+        warnings.push(...response.meta.warnings);
+        complete &&= response.meta.complete;
+        if (!response.data.hasMore) { exhausted = true; break; }
+        if (!response.data.cursor || response.data.cursor === cursor) {
+          warnings.push({ code: "TORII_CURSOR_STALLED", message: "Activity pagination stopped because Torii returned no usable next cursor.", source: "torii" });
+          break;
+        }
+        cursor = response.data.cursor;
+      }
+      if (!exhausted && items.length >= budget.maxToriiItems) warnings.push({ code: "TORII_ITEM_LIMIT", message: `Activity enumeration reached the ${budget.maxToriiItems} item budget.`, source: "torii" });
       return createDataResult({
-        data: {
-          items: response.data.items.map((event) => decodeActivity(context.network.name, event)),
-          ...(response.data.cursor ? { cursor: response.data.cursor } : {}),
-          hasMore: response.data.hasMore,
-        },
+        data: items,
         source: "derived",
-        complete: response.meta.complete,
-        attempts: response.meta.attempts,
-        warnings: response.meta.warnings,
+        complete: complete && exhausted,
+        attempts,
+        warnings,
         startedAt,
         now: context.now,
         ...(context.logger ? { logger: context.logger } : {}),
       });
     },
+    page,
+    list: page,
   };
 }

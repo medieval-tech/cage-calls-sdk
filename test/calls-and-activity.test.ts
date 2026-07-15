@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  createCallBuilders,
   createActivityRepository,
   createFightEventsRepository,
   createFightsRepository,
@@ -54,42 +53,7 @@ const fight = (seasonId: bigint, fightId: bigint): FightFeedItem => ({
   viewer: { hasBought: false, shares: 0n, boughtAt: 0n, hasRedeemed: false, isWinner: false, strikeTickets: 0n },
 });
 
-describe("call plans and activity", () => {
-  const calls = createCallBuilders(MAINNET_PRESET);
-
-  it("builds VRF + approval + strike without executing", () => {
-    const response = calls.gacha.strike(7n, "0xabc");
-    expect(response.calls.map((value) => value.entrypoint)).toEqual([
-      "request_random",
-      "set_approval_for_all",
-      "strike",
-    ]);
-    expect(response.requirements).toEqual({ controller: true, vrf: true, tokenApproval: true });
-  });
-
-  it("keep invalidates both gacha and owned relic data", () => {
-    const response = calls.gacha.keep(7n, "0x123");
-    expect(response.invalidate).toContainEqual(["cage-calls", "gacha", "7"]);
-    expect(response.invalidate).toContainEqual(["cage-calls", "owned-relics", "0x123"]);
-  });
-
-  it("builds FightFactory admin calls against the FightFactory address", () => {
-    const grant = calls.fights.grantAdmin("0xabc");
-    const revoke = calls.fights.revokeAdmin("0xabc");
-
-    expect(grant.calls).toEqual([{
-      contractAddress: MAINNET_PRESET.contracts.FightFactory,
-      entrypoint: "grant_admin",
-      calldata: ["0xabc"],
-    }]);
-    expect(revoke.calls).toEqual([{
-      contractAddress: MAINNET_PRESET.contracts.FightFactory,
-      entrypoint: "revoke_admin",
-      calldata: ["0xabc"],
-    }]);
-    expect(grant.invalidate).toContainEqual(["cage-calls", "admin", "all"]);
-  });
-
+describe("activity", () => {
   it("preserves unknown activity as a raw event", () => {
     const activity = decodeActivity("mainnet", {
       selector: "0x123",
