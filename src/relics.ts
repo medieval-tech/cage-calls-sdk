@@ -7,7 +7,7 @@ import {
   decodeRelicRowsRpc,
   decodeSingleU256,
 } from "./decoders.js";
-import { AllSourcesFailedError, UnsupportedCapabilityError, ValidationError } from "./errors.js";
+import { AllSourcesFailedError, TransportError, UnsupportedCapabilityError, ValidationError } from "./errors.js";
 import { createFightersRepository, type RepositoryContext } from "./repositories.js";
 import { summarizeRelicCollection, type RelicCollectionStats, type RelicStatsFilter } from "./relicStats.js";
 import type {
@@ -61,8 +61,12 @@ export interface RelicsRepository {
   page(input?: RelicFeedInput, options?: RequestOptions): Promise<DataResult<Page<Relic, bigint>>>;
   /** @deprecated Use page(). */
   feed(input?: RelicFeedInput, options?: RequestOptions): Promise<DataResult<Page<Relic, bigint>>>;
+  /** Exhaustive structured inventory. Does not fetch external token JSON or media. */
+  inventory(input?: RelicCollectionInput, options?: RequestOptions): Promise<DataResult<RelicCollection>>;
   collection(input?: RelicCollectionInput, options?: RequestOptions): Promise<DataResult<RelicCollection>>;
   stats(filter?: RelicStatsFilter, options?: RequestOptions): Promise<DataResult<RelicCollectionStats>>;
+  /** Owned inventory without external token JSON or media hydration. */
+  ownedInventory(owner: Address, options?: RequestOptions): Promise<DataResult<OwnedRelicsPage>>;
   owned(owner: Address, options?: RequestOptions): Promise<DataResult<OwnedRelicsPage>>;
   metadata(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Relic>>;
   owner(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Address>>;
@@ -267,11 +271,11 @@ async function hydrateJson(context: RelicContext, relic: Relic, attempts: Source
 }
 
 export function createRelicsRepository(context: RelicContext): RelicsRepository {
-  const get = async (tokenId: bigint, options: RequestOptions = {}) => {
+  let detectedRelicBatchLimit: number | undefined;
+
+  const getStructured = async (tokenId: bigint, options: RequestOptions = {}) => {
     if (tokenId <= 0n) throw new ValidationError("tokenId must be greater than zero.");
-    const startedAt = context.now();
     const attempts: SourceAttempt[] = [];
-    const warnings: DataWarning[] = [];
     try {
       const id = encodeU256(tokenId);
       const [owner, data, eventName, tokenUri] = await Promise.all([
@@ -284,7 +288,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       const ownerAddress = owner.data[0];
       if (!ownerAddress) throw new ValidationError("Relic owner response was empty.");
       const relicData = decodeRelicDataRpc(data.data);
-      let relic: Relic = {
+      const relic: Relic = {
         tokenId,
         owner: normalizeAddress(ownerAddress),
         ...relicData,
@@ -295,47 +299,124 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
         ownershipSource: "starknet-rpc",
         metadataSources: ["starknet-rpc"],
       };
-      relic = await hydrateJson(context, relic, attempts, warnings, options);
-      return toResult(context, startedAt, "starknet-rpc", relic, attempts, metadataComplete(relic), warnings);
+      return { relic, attempts };
     } catch (error) {
       attempts.push(...transportAttemptsFromError(error));
-      throw new AllSourcesFailedError("relics.get", attempts);
+      throw new AllSourcesFailedError("relics.get-structured", attempts);
     }
   };
 
-  const getMany = async (tokenIds: readonly bigint[], options: RequestOptions = {}) => {
+  const get = async (tokenId: bigint, options: RequestOptions = {}) => {
+    const startedAt = context.now();
+    const warnings: DataWarning[] = [];
+    const structured = await getStructured(tokenId, options);
+    const relic = await hydrateJson(context, structured.relic, structured.attempts, warnings, options);
+    return toResult(context, startedAt, "starknet-rpc", relic, structured.attempts, metadataComplete(relic), warnings);
+  };
+
+  function rateLimited(error: unknown): boolean {
+    if (error instanceof TransportError) return error.status === 429 || error.rpcCode === 429;
+    if (error instanceof AllSourcesFailedError) {
+      return error.attempts.some((attempt) => attempt.status === 429 || attempt.errorCode?.includes("429"));
+    }
+    return false;
+  }
+
+  async function relicBatchLimit(
+    attempts: SourceAttempt[],
+    warnings: DataWarning[],
+    options: RequestOptions,
+  ): Promise<number> {
+    if (detectedRelicBatchLimit !== undefined) return detectedRelicBatchLimit;
+    try {
+      const response = await rpcCall(context, "max_relic_batch_size", [], options);
+      attempts.push(...response.attempts);
+      const raw = response.data[0];
+      const advertised = raw === undefined ? 20 : Number(BigInt(raw));
+      detectedRelicBatchLimit = Number.isSafeInteger(advertised) && advertised >= 0 ? advertised : 20;
+    } catch (error) {
+      attempts.push(...transportAttemptsFromError(error));
+      if (options.signal?.aborted) throw error;
+      detectedRelicBatchLimit = 20;
+      warnings.push({
+        code: "LEGACY_RELIC_BATCH_LIMIT",
+        message: "This RelicNFT deployment does not advertise its aggregate limit; batches are limited to 20 for compatibility.",
+        source: "starknet-rpc",
+      });
+    }
+    return detectedRelicBatchLimit;
+  }
+
+  const getManyStructured = async (tokenIds: readonly bigint[], options: RequestOptions = {}) => {
     const startedAt = context.now();
     const unique = Array.from(new Set(tokenIds));
     if (unique.length === 0) return toResult(context, startedAt, "derived", [], [], true);
+    if (unique.some((tokenId) => tokenId <= 0n)) throw new ValidationError("tokenIds must be greater than zero.");
     const supportsBatch = context.capabilities.has("relicBatch") || await context.capabilities.probe("relicBatch", options.signal);
     if (!supportsBatch) {
-      const values = await mapConcurrent(unique, context.budget.maxConcurrency, (tokenId) => get(tokenId, options));
+      const values = await mapConcurrent(unique, context.budget.maxConcurrency, (tokenId) => getStructured(tokenId, options));
       return toResult(
         context,
         startedAt,
         "starknet-rpc",
-        values.map((value) => value.data),
-        values.flatMap((value) => value.meta.attempts),
-        values.every((value) => value.meta.complete),
-        values.flatMap((value) => value.meta.warnings),
+        values.map((value) => value.relic),
+        values.flatMap((value) => value.attempts),
+        true,
       );
     }
 
-    const relics: Relic[] = [];
     const attempts: SourceAttempt[] = [];
     const warnings: DataWarning[] = [];
-    for (let index = 0; index < unique.length; index += 20) {
-      const chunk = unique.slice(index, index + 20);
-      const response = await rpcCall(context, "get_relics", [chunk.length.toString(), ...chunk.flatMap((tokenId) => encodeU256(tokenId))], options);
-      attempts.push(...response.attempts);
-      const rows = decodeRelicRowsRpc(response.data);
-      const hydrated = await mapConcurrent(rows, context.budget.maxConcurrency, (row) => hydrateJson(context, row, attempts, warnings, options));
-      relics.push(...hydrated);
-      const present = new Set(rows.map((row) => row.tokenId));
-      const missing = chunk.filter((tokenId) => !present.has(tokenId));
-      if (missing.length > 0) warnings.push({ code: "MISSING_RELICS", message: `${missing.length} requested relic(s) were not returned.` });
+    const budget = resolveRequestBudget(context.budget, options);
+    const contractLimit = await relicBatchLimit(attempts, warnings, options);
+    const batchSize = contractLimit === 0
+      ? budget.relicBatchSize
+      : Math.min(budget.relicBatchSize, contractLimit);
+    const chunks: bigint[][] = [];
+    for (let index = 0; index < unique.length; index += batchSize) chunks.push(unique.slice(index, index + batchSize));
+
+    const fetchBatch = async (chunk: readonly bigint[]): Promise<Relic[]> => {
+      try {
+        const response = await rpcCall(context, "get_relics", [chunk.length.toString(), ...chunk.flatMap((tokenId) => encodeU256(tokenId))], options);
+        attempts.push(...response.attempts);
+        return decodeRelicRowsRpc(response.data);
+      } catch (error) {
+        attempts.push(...transportAttemptsFromError(error));
+        if (options.signal?.aborted || rateLimited(error) || chunk.length <= 1) throw error;
+        const midpoint = Math.ceil(chunk.length / 2);
+        warnings.push({
+          code: "RELIC_BATCH_SPLIT",
+          message: `A ${chunk.length}-relic aggregate call failed and was retried as smaller batches.`,
+          source: "starknet-rpc",
+        });
+        // Run halves in sequence so a successful smaller call closes the passive
+        // RPC circuit before probing the sibling at the same size.
+        const left = await fetchBatch(chunk.slice(0, midpoint));
+        const right = await fetchBatch(chunk.slice(midpoint));
+        return [...left, ...right];
+      }
+    };
+
+    const relics = (await mapConcurrent(chunks, budget.maxConcurrency, fetchBatch)).flat();
+    const present = new Set(relics.map((row) => row.tokenId));
+    const missing = unique.filter((tokenId) => !present.has(tokenId));
+    if (missing.length > 0) {
+      warnings.push({ code: "MISSING_RELICS", message: `${missing.length} requested relic(s) were not returned.` });
     }
-    return toResult(context, startedAt, "starknet-rpc", relics, attempts, relics.length === unique.length && relics.every(metadataComplete), warnings);
+    return toResult(context, startedAt, "starknet-rpc", relics, attempts, relics.length === unique.length, warnings);
+  };
+
+  const getMany = async (tokenIds: readonly bigint[], options: RequestOptions = {}) => {
+    const startedAt = context.now();
+    const structured = await getManyStructured(tokenIds, options);
+    const attempts = [...structured.meta.attempts];
+    const warnings = [...structured.meta.warnings];
+    const relics = await mapConcurrent(
+      structured.data,
+      resolveRequestBudget(context.budget, options).maxConcurrency,
+      (relic) => hydrateJson(context, relic, attempts, warnings, options),
+    );
+    return toResult(context, startedAt, "starknet-rpc", relics, attempts, structured.meta.complete && relics.every(metadataComplete), warnings);
   };
 
   async function hydrateToriiRelics(
@@ -343,11 +424,16 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     attempts: SourceAttempt[],
     warnings: DataWarning[],
     options: RequestOptions,
+    hydrateExternal = true,
   ): Promise<Relic[]> {
-    const incomplete = relics.filter((relic) => !metadataComplete(relic)).map((relic) => relic.tokenId);
+    const incomplete = relics
+      .filter((relic) => hydrateExternal ? !metadataComplete(relic) : !relic.metadata && relic.attributes.length === 0)
+      .map((relic) => relic.tokenId);
     if (incomplete.length === 0) return relics;
     try {
-      const hydrated = await getMany(incomplete, options);
+      const hydrated = hydrateExternal
+        ? await getMany(incomplete, options)
+        : await getManyStructured(incomplete, options);
       attempts.push(...hydrated.meta.attempts);
       warnings.push(...hydrated.meta.warnings);
       const byId = new Map(hydrated.data.map((relic) => [relic.tokenId.toString(), relic]));
@@ -407,6 +493,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     attempts: SourceAttempt[],
     warnings: DataWarning[],
     options: RequestOptions,
+    hydrateExternal: boolean,
   ): Promise<Relic[]> {
     const verified = (await mapConcurrent(candidates, context.budget.maxConcurrency, async (relic) => {
       try {
@@ -423,7 +510,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       message: `RPC ownership verification retained ${verified.length} of ${candidates.length} Torii relic candidates.`,
       source: "starknet-rpc",
     });
-    return hydrateToriiRelics(verified, attempts, warnings, options);
+    return hydrateToriiRelics(verified, attempts, warnings, options, hydrateExternal);
   }
 
   async function verifyToriiInventory(
@@ -431,6 +518,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     attempts: SourceAttempt[],
     warnings: DataWarning[],
     options: RequestOptions,
+    hydrateExternal: boolean,
   ): Promise<{ relics: Relic[]; complete: boolean }> {
     if (!context.torii) return { relics: [], complete: false };
     const budget = resolveRequestBudget(context.budget, options);
@@ -472,7 +560,9 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
         return undefined;
       }
     })).filter((value): value is bigint => value !== undefined);
-    const hydrated = await getMany(ownedIds, options);
+    const hydrated = hydrateExternal
+      ? await getMany(ownedIds, options)
+      : await getManyStructured(ownedIds, options);
     attempts.push(...hydrated.meta.attempts);
     return { relics: hydrated.data, complete };
   }
@@ -484,6 +574,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     attempts: SourceAttempt[],
     warnings: DataWarning[],
     options: RequestOptions,
+    hydrateExternal: boolean,
   ): Promise<{ relics: Relic[]; complete: boolean }> {
     const budget = resolveRequestBudget(context.budget, options);
     const ownerPage = context.capabilities.has("relicOwnerPage") || await context.capabilities.probe("relicOwnerPage", options.signal);
@@ -528,7 +619,9 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
           source: "starknet-rpc",
         });
       }
-      const hydrated = await mapConcurrent(Array.from(relics.values()), context.budget.maxConcurrency, (relic) => hydrateJson(context, relic, attempts, warnings, options));
+      const hydrated = hydrateExternal
+        ? await mapConcurrent(Array.from(relics.values()), context.budget.maxConcurrency, (relic) => hydrateJson(context, relic, attempts, warnings, options))
+        : Array.from(relics.values());
       return { relics: hydrated, complete };
     }
 
@@ -572,17 +665,252 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
           source: "starknet-rpc",
         });
       }
-      const hydrated = await mapConcurrent(Array.from(relics.values()), context.budget.maxConcurrency, (relic) => hydrateJson(context, relic, attempts, warnings, options));
+      const hydrated = hydrateExternal
+        ? await mapConcurrent(Array.from(relics.values()), context.budget.maxConcurrency, (relic) => hydrateJson(context, relic, attempts, warnings, options))
+        : Array.from(relics.values());
       return { relics: hydrated, complete };
     }
 
     if (toriiInventory.relics.length > 0) {
-      const relics = await verifyToriiCandidates(owner, toriiInventory.relics, attempts, warnings, options);
+      const relics = await verifyToriiCandidates(owner, toriiInventory.relics, attempts, warnings, options, hydrateExternal);
       if (relics.length > 0) return { relics, complete: toriiInventory.complete };
     }
 
     warnings.push({ code: "TORII_INVENTORY_RPC_VERIFICATION", message: "The deployment lacks owner pagination; token ownership was verified individually through RPC.", source: "starknet-rpc" });
-    return verifyToriiInventory(owner, attempts, warnings, options);
+    return verifyToriiInventory(owner, attempts, warnings, options, hydrateExternal);
+  }
+
+  async function loadInventory(
+    input: RelicCollectionInput = {},
+    options: RequestOptions = {},
+  ): Promise<DataResult<RelicCollection>> {
+    const startedAt = context.now();
+    const budget = resolveRequestBudget(context.budget, options);
+    const pageSize = clampPageSize(input.pageSize, 200, Math.min(200, budget.pageSize));
+    const attempts: SourceAttempt[] = [];
+    const warnings: DataWarning[] = [];
+    const relics = new Map<string, Relic>();
+    let pageCount = 0;
+    let toriiComplete = false;
+    let source: DataSource = context.torii ? "torii" : "starknet-rpc";
+
+    if (context.torii) {
+      let offset = 0;
+      try {
+        for (let page = 0; page < budget.maxToriiPages && relics.size < budget.maxToriiItems; page += 1) {
+          pageCount += 1;
+          const response = await context.torii.tokens(
+            context.network.contracts.RelicNFT,
+            { offset, limit: pageSize },
+            options,
+          );
+          attempts.push(...response.attempts);
+          for (const edge of response.data.edges) {
+            const mapped = edge.node.tokenMetadata
+              ? mapToriiRelic(edge.node.tokenMetadata, context.network.contracts.RelicNFT)
+              : undefined;
+            if (mapped && relics.size < budget.maxToriiItems) relics.set(mapped.tokenId.toString(), mapped);
+          }
+          offset += response.data.edges.length;
+          const tokenRows = Math.max(0, response.data.totalCount - 1);
+          if (offset >= tokenRows || response.data.edges.length === 0) {
+            toriiComplete = offset >= tokenRows;
+            break;
+          }
+        }
+        if (!toriiComplete) {
+          warnings.push({
+            code: relics.size >= budget.maxToriiItems ? "TORII_ITEM_LIMIT" : "TORII_PAGE_LIMIT",
+            message: relics.size >= budget.maxToriiItems
+              ? `Relic inventory reached the ${budget.maxToriiItems} Torii item budget.`
+              : `Relic inventory reached the ${budget.maxToriiPages} Torii page budget.`,
+            source: "torii",
+          });
+        }
+      } catch (error) {
+        attempts.push(...transportAttemptsFromError(error));
+        warnings.push({ code: "TORII_UNAVAILABLE", message: "Torii relic inventory lookup failed.", source: "torii" });
+        toriiComplete = false;
+      }
+    }
+
+    let expectedIds: bigint[] | undefined;
+    try {
+      const response = await rpcCall(context, "next_token_id", [], options);
+      attempts.push(...response.attempts);
+      const nextTokenId = decodeSingleU256(response.data, "nextRelicTokenId");
+      const expectedCount = nextTokenId > 0n ? nextTokenId - 1n : 0n;
+      const boundedCount = expectedCount > BigInt(budget.maxRpcItems)
+        ? budget.maxRpcItems
+        : Number(expectedCount);
+      expectedIds = Array.from({ length: boundedCount }, (_, index) => BigInt(index + 1));
+      if (expectedCount > BigInt(budget.maxRpcItems)) {
+        warnings.push({
+          code: "RPC_ITEM_LIMIT",
+          message: `Relic inventory expected ${expectedCount} tokens and was bounded by the ${budget.maxRpcItems} RPC item budget.`,
+          source: "starknet-rpc",
+        });
+      }
+    } catch (error) {
+      attempts.push(...transportAttemptsFromError(error));
+      warnings.push({
+        code: "RELIC_SUPPLY_UNAVAILABLE",
+        message: "The RelicNFT supply cursor could not be read; Torii inventory freshness could not be verified.",
+        source: "starknet-rpc",
+      });
+    }
+
+    let legacyComplete = false;
+    if (expectedIds === undefined && relics.size === 0) {
+      const relicFeed = context.capabilities.has("relicFeed") || await context.capabilities.probe("relicFeed", options.signal);
+      if (relicFeed) {
+        source = "starknet-rpc";
+        let cursor = 0n;
+        const rpcPageSize = Math.min(20, pageSize);
+        for (let page = 0; page < budget.maxRpcPages && relics.size < budget.maxRpcItems; page += 1) {
+          const response = await rpcCall(context, "get_relic_feed", [...encodeU256(cursor), rpcPageSize.toString()], options);
+          attempts.push(...response.attempts);
+          pageCount += 1;
+          const rows = decodeRelicRowsRpc(response.data);
+          for (const relic of rows) relics.set(relic.tokenId.toString(), relic);
+          const oldest = rows.at(-1)?.tokenId ?? 0n;
+          if (rows.length < rpcPageSize || oldest <= 1n) {
+            legacyComplete = true;
+            break;
+          }
+          cursor = oldest - 1n;
+        }
+        warnings.push({
+          code: "LEGACY_RELIC_SCAN",
+          message: "Relic inventory used the cursor feed because the supply cursor was unavailable.",
+          source: "starknet-rpc",
+        });
+      }
+    }
+
+    const missing = expectedIds?.filter((tokenId) => !relics.has(tokenId.toString())) ?? [];
+    const incomplete = Array.from(relics.values())
+      .filter((relic) => !relic.metadata && relic.attributes.length === 0)
+      .map((relic) => relic.tokenId);
+    const rpcIds = Array.from(new Set([...missing, ...incomplete]));
+    let rpcComplete = rpcIds.length === 0;
+    if (rpcIds.length > 0) {
+      try {
+        const response = await getManyStructured(rpcIds, options);
+        attempts.push(...response.meta.attempts);
+        warnings.push(...response.meta.warnings);
+        for (const relic of response.data) {
+          relics.set(relic.tokenId.toString(), mergeRelic(relics.get(relic.tokenId.toString()), relic));
+        }
+        rpcComplete = response.meta.complete;
+        source = "starknet-rpc";
+      } catch (error) {
+        attempts.push(...transportAttemptsFromError(error));
+        warnings.push({
+          code: "RELIC_GAP_FILL_FAILED",
+          message: `${rpcIds.length} missing or incomplete Torii relic rows could not be filled through aggregate RPC.`,
+          source: "starknet-rpc",
+        });
+      }
+    }
+
+    const fighters: Fighter[] = [];
+    let fightersComplete = input.enrichFighters === false;
+    if (input.enrichFighters !== false && context.torii) {
+      try {
+        const response = await createFightersRepository(context).all({}, options);
+        attempts.push(...response.meta.attempts);
+        warnings.push(...response.meta.warnings);
+        fighters.push(...response.data.sort((a, b) => a.name.localeCompare(b.name)));
+        fightersComplete = response.meta.complete;
+      } catch (error) {
+        attempts.push(...transportAttemptsFromError(error));
+        warnings.push({ code: "TORII_FIGHTER_ENRICHMENT_FAILED", message: "Fighter names could not be enumerated through Torii.", source: "torii" });
+      }
+    } else if (!context.torii) {
+      fightersComplete = input.enrichFighters === false;
+    }
+
+    const items = Array.from(relics.values()).sort((a, b) => a.tokenId === b.tokenId ? 0 : a.tokenId > b.tokenId ? -1 : 1);
+    const expectedComplete = expectedIds !== undefined
+      && !warnings.some((warning) => warning.code === "RPC_ITEM_LIMIT")
+      && items.length === expectedIds.length;
+    const complete = expectedIds === undefined
+      ? (toriiComplete || legacyComplete) && fightersComplete
+      : expectedComplete && rpcComplete && fightersComplete;
+    return toResult(
+      context,
+      startedAt,
+      source,
+      { items, fighters, scannedCount: items.length, pageCount },
+      attempts,
+      complete,
+      warnings,
+    );
+  }
+
+  async function loadOwned(
+    ownerInput: Address,
+    options: RequestOptions,
+    hydrateExternal: boolean,
+  ): Promise<DataResult<OwnedRelicsPage>> {
+    const owner = normalizeAddress(ownerInput);
+    const startedAt = context.now();
+    const attempts: SourceAttempt[] = [];
+    const warnings: DataWarning[] = [];
+    let balance: bigint;
+    try {
+      const response = await rpcCall(context, "balance_of", [owner], options);
+      attempts.push(...response.attempts);
+      balance = decodeSingleU256(response.data, "relicBalance");
+    } catch (error) {
+      attempts.push(...transportAttemptsFromError(error));
+      throw new AllSourcesFailedError("relics.owned.balance-verification", attempts);
+    }
+
+    if (balance === 0n) {
+      return toResult(context, startedAt, "starknet-rpc", {
+        items: [],
+        hasMore: false,
+        provenance: { owner, onchainBalance: 0n, ownershipSource: "starknet-rpc", verified: true },
+      }, attempts, true);
+    }
+
+    let toriiInventory: { relics: Relic[]; complete: boolean } = { relics: [], complete: false };
+    if (context.torii) {
+      try {
+        toriiInventory = await toriiOwned(owner, attempts, warnings, options);
+        let torii = toriiInventory.relics;
+        if (BigInt(torii.length) === balance) {
+          torii = await hydrateToriiRelics(torii, attempts, warnings, options, hydrateExternal);
+          return toResult(context, startedAt, "torii", {
+            items: torii.map((relic) => ({ ...relic, owner, ownershipSource: "torii" as const })),
+            hasMore: false,
+            provenance: { owner, onchainBalance: balance, ownershipSource: "torii", verified: true },
+          }, attempts, !hydrateExternal || torii.every(metadataComplete), warnings);
+        }
+        warnings.push({ code: "TORII_BALANCE_MISMATCH", message: `Torii returned ${torii.length} of ${balance} owned relics.`, source: "torii" });
+      } catch (error) {
+        attempts.push(...transportAttemptsFromError(error));
+        warnings.push({ code: "TORII_UNAVAILABLE", message: "Torii ownership lookup failed.", source: "torii" });
+      }
+    }
+
+    try {
+      const discovered = await rpcOwned(owner, balance, toriiInventory, attempts, warnings, options, hydrateExternal);
+      const verified = BigInt(discovered.relics.length) === balance;
+      if (discovered.relics.length === 0 && balance > 0n) throw new AllSourcesFailedError("relics.owned", attempts);
+      if (!verified) warnings.push({ code: "RPC_BALANCE_MISMATCH", message: `RPC discovery found ${discovered.relics.length} of ${balance} relics.`, source: "starknet-rpc" });
+      const inventoryComplete = verified || discovered.complete;
+      return toResult(context, startedAt, "starknet-rpc", {
+        items: discovered.relics.map((relic) => ({ ...relic, owner, ownershipSource: "starknet-rpc" as const })),
+        hasMore: !inventoryComplete,
+        provenance: { owner, onchainBalance: balance, ownershipSource: "starknet-rpc", verified },
+      }, attempts, verified && (!hydrateExternal || discovered.relics.every(metadataComplete)), warnings);
+    } catch (error) {
+      if (error instanceof AllSourcesFailedError) throw error;
+      throw new AllSourcesFailedError("relics.owned", [...attempts, ...transportAttemptsFromError(error)]);
+    }
   }
 
   const repository: RelicsRepository = {
@@ -659,7 +987,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
                 warnings,
               );
             }
-            toriiReturnedEmpty = cursorState.kind === "start" && response.data.totalCount === 0;
+            toriiReturnedEmpty = cursorState.kind === "start" && Math.max(0, response.data.totalCount - 1) === 0;
             if (cursorState.kind === "torii" || response.data.edges.length > 0) {
               return toResult(context, startedAt, "torii", { items: [], cursor: 0n, hasMore: false }, attempts, true, warnings);
             }
@@ -708,81 +1036,34 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       }
       throw new UnsupportedCapabilityError("relic feed enumeration");
     },
+    inventory(input = {}, options = {}) {
+      return loadInventory(input, options);
+    },
     async collection(input = {}, options = {}) {
       const startedAt = context.now();
-      const budget = resolveRequestBudget(context.budget, options);
-      const pageSize = clampPageSize(input.pageSize, 200, Math.min(200, budget.pageSize));
-      const maxPages = Math.max(budget.maxToriiPages, budget.maxRpcPages);
-      const maxItems = Math.max(budget.maxToriiItems, budget.maxRpcItems);
-      const relics = new Map<string, Relic>();
-      const seenCursors = new Set<string>(["0"]);
-      const attempts: SourceAttempt[] = [];
-      const warnings: DataWarning[] = [];
-      let cursor = 0n;
-      let pageCount = 0;
-      let scannedCount = 0;
-      let reachedEnd = false;
-      let complete = true;
-      let source: DataSource = "torii";
-
-      while (pageCount < maxPages && relics.size < maxItems && !reachedEnd) {
-        const response = await repository.feed({ cursor, limit: pageSize }, options);
-        pageCount += 1;
-        scannedCount += response.data.items.length;
-        complete &&= response.meta.complete;
-        if (response.meta.source === "starknet-rpc") source = "starknet-rpc";
-        attempts.push(...response.meta.attempts);
-        warnings.push(...response.meta.warnings);
-        for (const relic of response.data.items) {
-          if (relics.size >= maxItems) break;
-          relics.set(relic.tokenId.toString(), relic);
-        }
-
-        reachedEnd = !response.data.hasMore || response.data.items.length === 0;
-        const nextCursor = response.data.cursor ?? 0n;
-        const cursorKey = nextCursor.toString();
-        if (!reachedEnd && seenCursors.has(cursorKey)) {
-          complete = false;
-          reachedEnd = true;
-          warnings.push({ code: "RELIC_CURSOR_STALLED", message: `Relic collection pagination stopped at repeated cursor ${nextCursor}.` });
-        } else if (!reachedEnd) {
-          seenCursors.add(cursorKey);
-        }
-        cursor = nextCursor;
-      }
-
-      if (!reachedEnd) {
-        complete = false;
-        warnings.push({
-          code: relics.size >= maxItems ? "RELIC_ITEM_LIMIT_REACHED" : "RELIC_PAGE_LIMIT_REACHED",
-          message: relics.size >= maxItems
-            ? `Relic collection reached the ${maxItems} item budget.`
-            : `Relic collection reached the ${maxPages} page budget.`,
-          source,
-        });
-      }
-
-      const items = Array.from(relics.values());
-      const fighters: Fighter[] = [];
-      if (input.enrichFighters !== false && context.torii) {
-        const fighterRepository = createFightersRepository(context);
-        try {
-          const response = await fighterRepository.all({}, options);
-          attempts.push(...response.meta.attempts);
-          warnings.push(...response.meta.warnings);
-          fighters.push(...response.data.sort((a, b) => a.name.localeCompare(b.name)));
-          complete &&= response.meta.complete;
-        } catch (error) {
-          attempts.push(...transportAttemptsFromError(error));
-          warnings.push({ code: "TORII_FIGHTER_ENRICHMENT_FAILED", message: "Fighter names could not be enumerated through Torii.", source: "torii" });
-        }
-      }
-
-      return toResult(context, startedAt, source, { items, fighters, scannedCount, pageCount }, attempts, complete, warnings);
+      const inventory = await repository.inventory(input, options);
+      const attempts = [...inventory.meta.attempts];
+      const warnings = [...inventory.meta.warnings];
+      const items = await mapConcurrent(
+        inventory.data.items,
+        resolveRequestBudget(context.budget, options).maxConcurrency,
+        (relic) => metadataComplete(relic)
+          ? Promise.resolve(relic)
+          : hydrateJson(context, relic, attempts, warnings, options),
+      );
+      return toResult(
+        context,
+        startedAt,
+        inventory.meta.source,
+        { ...inventory.data, items },
+        attempts,
+        inventory.meta.complete && items.every(metadataComplete),
+        warnings,
+      );
     },
     async stats(filter = {}, options = {}) {
       const startedAt = context.now();
-      const collection = await repository.collection({}, options);
+      const collection = await repository.inventory({}, options);
       const stats = summarizeRelicCollection(collection.data.items, filter, collection.data.fighters);
       return toResult(
         context,
@@ -794,64 +1075,11 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
         [...collection.meta.warnings, ...stats.warnings],
       );
     },
-    async owned(ownerInput, options = {}) {
-      const owner = normalizeAddress(ownerInput);
-      const startedAt = context.now();
-      const attempts: SourceAttempt[] = [];
-      const warnings: DataWarning[] = [];
-      let balance: bigint;
-      try {
-        const response = await rpcCall(context, "balance_of", [owner], options);
-        attempts.push(...response.attempts);
-        balance = decodeSingleU256(response.data, "relicBalance");
-      } catch (error) {
-        attempts.push(...transportAttemptsFromError(error));
-        throw new AllSourcesFailedError("relics.owned.balance-verification", attempts);
-      }
-
-      if (balance === 0n) {
-        return toResult(context, startedAt, "starknet-rpc", {
-          items: [],
-          hasMore: false,
-          provenance: { owner, onchainBalance: 0n, ownershipSource: "starknet-rpc", verified: true },
-        }, attempts, true);
-      }
-
-      let toriiInventory: { relics: Relic[]; complete: boolean } = { relics: [], complete: false };
-      if (context.torii) {
-        try {
-          toriiInventory = await toriiOwned(owner, attempts, warnings, options);
-          let torii = toriiInventory.relics;
-          if (BigInt(torii.length) === balance) {
-            torii = await hydrateToriiRelics(torii, attempts, warnings, options);
-            return toResult(context, startedAt, "torii", {
-              items: torii.map((relic) => ({ ...relic, owner, ownershipSource: "torii" as const })),
-              hasMore: false,
-              provenance: { owner, onchainBalance: balance, ownershipSource: "torii", verified: true },
-            }, attempts, torii.every(metadataComplete), warnings);
-          }
-          warnings.push({ code: "TORII_BALANCE_MISMATCH", message: `Torii returned ${torii.length} of ${balance} owned relics.`, source: "torii" });
-        } catch (error) {
-          attempts.push(...transportAttemptsFromError(error));
-          warnings.push({ code: "TORII_UNAVAILABLE", message: "Torii ownership lookup failed.", source: "torii" });
-        }
-      }
-
-      try {
-        const discovered = await rpcOwned(owner, balance, toriiInventory, attempts, warnings, options);
-        const verified = BigInt(discovered.relics.length) === balance;
-        if (discovered.relics.length === 0 && balance > 0n) throw new AllSourcesFailedError("relics.owned", attempts);
-        if (!verified) warnings.push({ code: "RPC_BALANCE_MISMATCH", message: `RPC discovery found ${discovered.relics.length} of ${balance} relics.`, source: "starknet-rpc" });
-        const inventoryComplete = verified || discovered.complete;
-        return toResult(context, startedAt, "starknet-rpc", {
-          items: discovered.relics.map((relic) => ({ ...relic, owner, ownershipSource: "starknet-rpc" as const })),
-          hasMore: !inventoryComplete,
-          provenance: { owner, onchainBalance: balance, ownershipSource: "starknet-rpc", verified },
-        }, attempts, verified && discovered.relics.every(metadataComplete), warnings);
-      } catch (error) {
-        if (error instanceof AllSourcesFailedError) throw error;
-        throw new AllSourcesFailedError("relics.owned", [...attempts, ...transportAttemptsFromError(error)]);
-      }
+    ownedInventory(owner, options = {}) {
+      return loadOwned(owner, options, false);
+    },
+    owned(owner, options = {}) {
+      return loadOwned(owner, options, true);
     },
     metadata: get,
     async owner(tokenId, options = {}) {

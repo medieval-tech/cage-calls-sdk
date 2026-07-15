@@ -80,7 +80,7 @@ describe("relic ownership source policy", () => {
     expect(response.meta.source).toBe("torii");
     expect(response.data.items[0]?.metadata?.fightId).toBe(10n);
     expect(response.data.items[0]?.name).toBe("Hydrated");
-    expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["get_relics"]);
+    expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["max_relic_batch_size", "get_relics"]);
   });
 
   it("continues an interrupted Torii feed through RPC without restarting or duplicating relics", async () => {
@@ -143,7 +143,7 @@ describe("relic ownership source policy", () => {
 
   it("enumerates complete Torii collections beyond the former 1,000-row window without RPC", async () => {
     const totalRows = 1_205;
-    const rpc = createMockRpcTransport();
+    const rpc = createMockRpcTransport({ calls: { next_token_id: [String(totalRows + 1), "0"] } });
     const torii = createMockToriiTransport({
       tokens: ({ offset = 0, limit = 100 }) => ({
         totalCount: totalRows + 1,
@@ -159,7 +159,7 @@ describe("relic ownership source policy", () => {
     expect(response.data.items).toHaveLength(totalRows);
     expect(response.data.pageCount).toBe(7);
     expect(response.meta.complete).toBe(true);
-    expect(rpc.calls).toEqual([]);
+    expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["next_token_id"]);
   });
 
   it("hydrates exactly the incomplete Torii rows across a full collection", async () => {
@@ -201,6 +201,83 @@ describe("relic ownership source policy", () => {
     expect(new Set(requestedIds)).toEqual(missingIds);
     expect(requestedIds).toHaveLength(missingIds.size);
     expect(response.meta.complete).toBe(true);
+  });
+
+  it("uses configurable aggregate batches instead of one RPC call per relic", async () => {
+    const rpc = createMockRpcTransport({
+      calls: {
+        max_relic_batch_size: ["0"],
+        get_relics: (request) => {
+          const calldata = request.calldata ?? [];
+          const count = Number(calldata[0] ?? "0");
+          const ids = Array.from({ length: count }, (_, index) => BigInt(calldata[1 + index * 2] ?? "0"));
+          return encodeRelicRows(ids.map((tokenId) => ({ tokenId, owner })));
+        },
+      },
+    });
+    const client = createCageCallsClient({ network: SEPOLIA_DEV_PRESET, transports: { rpc } });
+
+    await client.relics.getMany(Array.from({ length: 205 }, (_, index) => BigInt(index + 1)));
+    await client.relics.getMany(Array.from({ length: 130 }, (_, index) => BigInt(index + 1)), { relicBatchSize: 64 });
+
+    const sizes = rpc.calls
+      .filter((call) => call.entrypoint === "get_relics")
+      .map((call) => Number(call.calldata?.[0]));
+    expect(sizes).toEqual([100, 100, 5, 64, 64, 2]);
+    expect(rpc.calls.filter((call) => call.entrypoint === "max_relic_batch_size")).toHaveLength(1);
+  });
+
+  it("splits oversized aggregate calls adaptively", async () => {
+    const rpc = createMockRpcTransport({
+      calls: {
+        max_relic_batch_size: ["0"],
+        get_relics: (request) => {
+          const calldata = request.calldata ?? [];
+          const count = Number(calldata[0] ?? "0");
+          if (count > 25) throw new Error("response too large");
+          const ids = Array.from({ length: count }, (_, index) => BigInt(calldata[1 + index * 2] ?? "0"));
+          return encodeRelicRows(ids.map((tokenId) => ({ tokenId, owner })));
+        },
+      },
+    });
+    const client = createCageCallsClient({ network: SEPOLIA_DEV_PRESET, transports: { rpc } });
+
+    const response = await client.relics.getMany(
+      Array.from({ length: 60 }, (_, index) => BigInt(index + 1)),
+      { relicBatchSize: 60 },
+    );
+
+    expect(response.data).toHaveLength(60);
+    expect(response.meta.warnings.map((warning) => warning.code)).toContain("RELIC_BATCH_SPLIT");
+    expect(rpc.calls.filter((call) => call.entrypoint === "get_relics").map((call) => Number(call.calldata?.[0])))
+      .toEqual([60, 30, 15, 15, 30, 15, 15]);
+  });
+
+  it("keeps inventory reads off external metadata gateways", async () => {
+    const rpc = createMockRpcTransport({
+      calls: {
+        next_token_id: ["3", "0"],
+        max_relic_batch_size: ["0"],
+        get_relics: encodeRelicRows([{ tokenId: 2n, owner }]),
+      },
+    });
+    const torii = createMockToriiTransport({
+      tokens: {
+        totalCount: 2,
+        edges: [{ node: { tokenMetadata: toriiToken(1n, SEPOLIA_DEV_PRESET.contracts.RelicNFT) } }],
+      },
+    });
+    const metadata = createMockMetadataTransport({
+      "ipfs://metadata-2": { name: "Two", image: "ipfs://two", attributes: [] },
+    });
+    const getJson = vi.spyOn(metadata, "getJson");
+    const client = createCageCallsClient({ network: SEPOLIA_DEV_PRESET, transports: { rpc, torii, metadata } });
+
+    const response = await client.relics.inventory({ enrichFighters: false });
+
+    expect(response.data.items.map((relic) => relic.tokenId)).toEqual([2n, 1n]);
+    expect(response.meta.complete).toBe(true);
+    expect(getJson).not.toHaveBeenCalled();
   });
 
   it("marks an empty Torii inventory unverified when no aggregate fallback is deployed", async () => {

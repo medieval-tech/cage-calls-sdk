@@ -104,7 +104,7 @@ describe("activity", () => {
         pageInfo: { hasNextPage: false },
       } }),
       capabilities: { has: () => false, probe: async () => false, snapshot: () => MAINNET_PRESET.capabilities },
-      budget: { timeoutMs: 1, maxConcurrency: 1, maxRpcPages: 1, maxRpcItems: 1, maxToriiPages: 1, maxToriiItems: 100, pageSize: 20 },
+      budget: { timeoutMs: 1, maxConcurrency: 1, maxRpcPages: 1, maxRpcItems: 1, maxToriiPages: 1, maxToriiItems: 100, pageSize: 20, relicBatchSize: 100 },
       now: () => 15_000,
     } satisfies RepositoryContext;
 
@@ -131,7 +131,7 @@ describe("activity", () => {
       network: MAINNET_PRESET,
       rpc: createMockRpcTransport(),
       capabilities: { has: () => false, probe: async () => false, snapshot: () => MAINNET_PRESET.capabilities },
-      budget: { timeoutMs: 1, maxConcurrency: 1, maxRpcPages: 1, maxRpcItems: 1, maxToriiPages: 1, maxToriiItems: 100, pageSize: 1 },
+      budget: { timeoutMs: 1, maxConcurrency: 1, maxRpcPages: 1, maxRpcItems: 1, maxToriiPages: 1, maxToriiItems: 100, pageSize: 1, relicBatchSize: 100 },
       now: () => 15_000,
     } satisfies RepositoryContext;
     const response = await createFightEventsRepository(context, fights).list({ now: 15n });
@@ -170,7 +170,7 @@ describe("activity", () => {
       network: MAINNET_PRESET,
       rpc,
       capabilities: { has: () => false, probe: async () => false, snapshot: () => MAINNET_PRESET.capabilities },
-      budget: { timeoutMs: 1, maxConcurrency: 2, maxRpcPages: 1, maxRpcItems: 20, maxToriiPages: 1, maxToriiItems: 100, pageSize: 20 },
+      budget: { timeoutMs: 1, maxConcurrency: 2, maxRpcPages: 1, maxRpcItems: 20, maxToriiPages: 1, maxToriiItems: 100, pageSize: 20, relicBatchSize: 100 },
       now: () => 15_000,
     } satisfies RepositoryContext;
 
@@ -216,7 +216,7 @@ describe("activity", () => {
       rpc: createMockRpcTransport(),
       torii,
       capabilities: { has: () => false, probe: async () => false, snapshot: () => MAINNET_PRESET.capabilities },
-      budget: { timeoutMs: 1, maxConcurrency: 2, maxRpcPages: 1, maxRpcItems: 20, maxToriiPages: 1, maxToriiItems: 100, pageSize: 20 },
+      budget: { timeoutMs: 1, maxConcurrency: 2, maxRpcPages: 1, maxRpcItems: 20, maxToriiPages: 1, maxToriiItems: 100, pageSize: 20, relicBatchSize: 100 },
       now: () => 15_000,
     } satisfies RepositoryContext;
 

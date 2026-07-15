@@ -109,6 +109,8 @@ export interface TraversalLimits {
 export interface RequestOptions {
   signal?: AbortSignal;
   traversal?: Partial<TraversalLimits>;
+  /** Preferred size for aggregate `get_relics` calls. The SDK splits failed batches adaptively. */
+  relicBatchSize?: number;
 }
 
 export interface SdkLogger {
@@ -122,6 +124,7 @@ export interface RequestBudget extends TraversalLimits {
   timeoutMs: number;
   maxConcurrency: number;
   pageSize: number;
+  relicBatchSize: number;
 }
 
 export interface Fighter {

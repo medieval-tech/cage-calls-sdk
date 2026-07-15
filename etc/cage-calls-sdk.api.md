@@ -469,11 +469,13 @@ export const cageCallsQueryKeys: Readonly<{
     }) => readonly ["cage-calls", string, ...unknown[]];
     market: (marketId: bigint) => readonly ["cage-calls", string, ...unknown[]];
     relics: (input?: RelicFeedInput) => readonly ["cage-calls", string, ...unknown[]];
+    relicInventory: (input?: RelicCollectionInput) => readonly ["cage-calls", string, ...unknown[]];
     relicCollection: (input?: RelicCollectionInput) => readonly ["cage-calls", string, ...unknown[]];
     relicStats: (filter?: RelicStatsFilter) => readonly ["cage-calls", string, ...unknown[]];
     relicsMany: (tokenIds: readonly bigint[]) => readonly ["cage-calls", string, ...unknown[]];
     relic: (tokenId: bigint) => readonly ["cage-calls", string, ...unknown[]];
     ownedRelics: (account: Address) => readonly ["cage-calls", string, ...unknown[]];
+    ownedRelicInventory: (account: Address) => readonly ["cage-calls", string, ...unknown[]];
     gacha: (fightId: bigint) => readonly ["cage-calls", string, ...unknown[]];
     gachaUser: (fightId: bigint, account: Address) => readonly ["cage-calls", string, ...unknown[]];
     gachaTokens: (fightId: bigint, input?: {
@@ -1837,10 +1839,12 @@ export interface RelicsRepository {
     get(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Relic>>;
     // (undocumented)
     getMany(tokenIds: readonly bigint[], options?: RequestOptions): Promise<DataResult<Relic[]>>;
+    inventory(input?: RelicCollectionInput, options?: RequestOptions): Promise<DataResult<RelicCollection>>;
     // (undocumented)
     metadata(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Relic>>;
     // (undocumented)
     owned(owner: Address, options?: RequestOptions): Promise<DataResult<OwnedRelicsPage>>;
+    ownedInventory(owner: Address, options?: RequestOptions): Promise<DataResult<OwnedRelicsPage>>;
     // (undocumented)
     owner(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Address>>;
     // (undocumented)
@@ -1971,6 +1975,8 @@ export interface RequestBudget extends TraversalLimits {
     // (undocumented)
     pageSize: number;
     // (undocumented)
+    relicBatchSize: number;
+    // (undocumented)
     timeoutMs: number;
 }
 
@@ -1984,6 +1990,7 @@ export interface RequestCoalescer {
 
 // @public (undocumented)
 export interface RequestOptions {
+    relicBatchSize?: number;
     // (undocumented)
     signal?: AbortSignal;
     // (undocumented)

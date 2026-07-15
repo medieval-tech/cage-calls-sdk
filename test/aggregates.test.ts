@@ -36,7 +36,7 @@ describe("public and account aggregates", () => {
     network: MAINNET_PRESET,
     rpc: createMockRpcTransport(),
     capabilities: { has: () => true, probe: async () => true, snapshot: () => MAINNET_PRESET.capabilities },
-    budget: { timeoutMs: 1, maxConcurrency: 4, maxRpcPages: 10, maxRpcItems: 100, maxToriiPages: 10, maxToriiItems: 100, pageSize: 20 },
+    budget: { timeoutMs: 1, maxConcurrency: 4, maxRpcPages: 10, maxRpcItems: 100, maxToriiPages: 10, maxToriiItems: 100, pageSize: 20, relicBatchSize: 100 },
     now: () => 10_000,
   } satisfies RepositoryContext;
 

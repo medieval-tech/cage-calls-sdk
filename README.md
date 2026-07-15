@@ -84,17 +84,22 @@ const client = createCageCallsClient({
     maxToriiPages: 2_000,
     maxRpcItems: 200_000,
     maxRpcPages: 1_000,
+    relicBatchSize: 100,
   },
 });
 
 const snapshot = await client.analytics.snapshot({
   traversal: { maxToriiItems: 250_000, maxRpcItems: 250_000 },
 });
+
+const relics = await client.relics.inventory({}, { relicBatchSize: 250 });
 ```
 
-Contract-defined page sizes are still respected. Repositories iterate those pages, chunk batch
-views, and stop early only when the source proves exhaustion or an authoritative count/balance
-has been satisfied.
+Contract-defined page sizes are still respected. Explicit relic ID batches default to 100 IDs,
+honor the deployment's advertised limit, and split adaptively when an RPC provider cannot return
+the requested response size. A `relicBatchSize` client budget or per-request override controls the
+preferred size; it is not a result cap. Repositories stop early only when the source proves
+exhaustion or an authoritative count/balance has been satisfied.
 
 ## Read-only domain client
 
@@ -140,13 +145,16 @@ otherwise the repository uses bounded owner-filtered contract views over Starkne
 metadata. Full authenticated RPC URLs are excluded from logs and errors.
 
 Relic feeds query Torii first and fall back to the aggregate contract view only when Torii is
-empty or unavailable. Complete indexed rows are returned as-is. RPC and IPFS hydration are
-automatic and selective: only token IDs whose indexed metadata is incomplete are hydrated.
-Callers do not select a metadata source or need a second visible-page request:
+empty or unavailable. Complete indexed rows are returned as-is. Use `inventory()` and
+`ownedInventory()` for analytics, exports, and counts: they fill missing indexed rows with
+structured aggregate RPC and never request external token JSON or media. Use `collection()` and
+`owned()` for display surfaces: IPFS hydration is automatic and selective for incomplete rows.
+Callers do not select a metadata source:
 
 ```ts
-const inventory = await client.relics.collection({ pageSize: 200 });
-const visible = inventory.data.items.slice(0, 20);
+const analyticsInventory = await client.relics.inventory({ pageSize: 200 });
+const displayCollection = await client.relics.collection({ pageSize: 200 });
+const visible = displayCollection.data.items.slice(0, 20);
 ```
 
 For collection-wide analysis, `relics.collection()` traverses every indexed page without an
@@ -160,7 +168,7 @@ import {
   summarizeRelicCollection,
 } from "@medieval-tech/cage-calls-sdk";
 
-const collection = await client.relics.collection();
+const collection = await client.relics.inventory();
 const filter = { fighterKeys: ["jordan_rank"], rarityTiers: ["common"] as const };
 const summary = summarizeRelicCollection(
   collection.data.items,

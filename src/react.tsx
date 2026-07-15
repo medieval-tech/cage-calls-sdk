@@ -185,6 +185,11 @@ export function useRelicCollection(input: RelicCollectionInput = {}, options?: O
   return useQuery({ queryKey: keys.relicCollection(input), queryFn: ({ signal }) => client.relics.collection(input, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
+export function useRelicInventory(input: RelicCollectionInput = {}, options?: Options<DataResult<RelicCollection>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.relicInventory(input), queryFn: ({ signal }) => client.relics.inventory(input, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
 export function useRelicStats(filter: RelicStatsFilter = {}, options?: Options<DataResult<RelicCollectionStats>>) {
   const client = useCageCallsClient();
   return useQuery({ queryKey: keys.relicStats(filter), queryFn: ({ signal }) => client.relics.stats(filter, { signal }), refetchOnWindowFocus: false, ...options });
@@ -193,6 +198,11 @@ export function useRelicStats(filter: RelicStatsFilter = {}, options?: Options<D
 export function useOwnedRelics(account: Address, options?: Options<DataResult<OwnedRelicsPage>>) {
   const client = useCageCallsClient();
   return useQuery({ queryKey: keys.ownedRelics(account), queryFn: ({ signal }) => client.relics.owned(account, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
+export function useOwnedRelicInventory(account: Address, options?: Options<DataResult<OwnedRelicsPage>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.ownedRelicInventory(account), queryFn: ({ signal }) => client.relics.ownedInventory(account, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
 export function useRelicMetadata(tokenId: bigint, options?: Options<DataResult<Relic>>) {
@@ -315,7 +325,7 @@ function liveInvalidationKeys(update: CageCallsLiveUpdate): readonly (readonly u
     case "fighter": return [keys.fighter(update.fighterId), keys.fighters(), keys.relicStats()];
     case "fight": return [keys.fight(update.fightId), keys.fights(), keys.fightFeed(), keys.analytics()];
     case "market": return [keys.market(update.marketId), keys.markets(), keys.analytics()];
-    case "relic": return [keys.relic(update.tokenId), keys.relics(), keys.relicCollection(), keys.relicStats(), ...(update.owner ? [keys.ownedRelics(update.owner), keys.accountPortfolio(update.owner)] : [])];
+    case "relic": return [keys.relic(update.tokenId), keys.relics(), keys.relicInventory(), keys.relicCollection(), keys.relicStats(), ...(update.owner ? [keys.ownedRelics(update.owner), keys.ownedRelicInventory(update.owner), keys.accountPortfolio(update.owner)] : [])];
     case "gacha": return [keys.gacha(update.fightId), ...(update.account ? [keys.gachaUser(update.fightId, update.account), keys.accountPortfolio(update.account)] : [])];
     case "token-balance": return [keys.tokens(update.account), keys.accountPortfolio(update.account)];
     case "activity": return [keys.activity(), keys.analytics()];

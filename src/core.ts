@@ -9,6 +9,7 @@ export const DEFAULT_REQUEST_BUDGET: Readonly<RequestBudget> = Object.freeze({
   maxToriiPages: 1_000,
   maxToriiItems: 100_000,
   pageSize: 100,
+  relicBatchSize: 100,
 });
 
 export function resolveBudget(value?: Partial<RequestBudget>): RequestBudget {
@@ -22,7 +23,7 @@ export function resolveBudget(value?: Partial<RequestBudget>): RequestBudget {
 }
 
 export function resolveRequestBudget(budget: RequestBudget, options?: RequestOptions): RequestBudget {
-  return resolveBudget({ ...budget, ...options?.traversal });
+  return resolveBudget({ ...budget, ...options?.traversal, ...(options?.relicBatchSize === undefined ? {} : { relicBatchSize: options.relicBatchSize }) });
 }
 
 export function createDataResult<T>(args: {

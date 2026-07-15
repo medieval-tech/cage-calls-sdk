@@ -467,6 +467,7 @@ export function createToriiGraphqlTransport(options: { url: string } & HttpOptio
   const timeoutMs = options.timeoutMs ?? 12_000;
   let modelPaginationDialect: "relay" | "offset" | undefined;
   let eventPaginationDialect: "relay" | "offset" | undefined;
+  const tokenCountCache = new Map<string, { totalCount: number; expiresAt: number }>();
 
   const canRetryWithOffset = (error: unknown, signal?: AbortSignal) =>
     !signal?.aborted
@@ -639,13 +640,41 @@ export function createToriiGraphqlTransport(options: { url: string } & HttpOptio
       return { ...result, data: result.data.tokenBalances };
     },
     async tokens(contract, request = {}, requestOptions) {
+      // Torii includes a synthetic contract metadata row as the final token row.
+      // Asking for a page that crosses that row can make large metadata responses
+      // fail at the gateway. Read the cheap count first and bound the data page to
+      // actual token rows.
+      const countDocument = "query CageCallsTokenCount($contract:String){tokens(contractAddress:$contract,offset:0,limit:0){totalCount}}";
       const document = "query CageCallsTokens($contract:String,$offset:Int,$limit:Int){tokens(contractAddress:$contract,offset:$offset,limit:$limit){totalCount edges{node{tokenMetadata{__typename ... on ERC721__Token{tokenId contractAddress metadata metadataName metadataDescription metadataAttributes imagePath} ... on ERC1155__Token{tokenId contractAddress metadata metadataName metadataDescription metadataAttributes imagePath}}}}}}";
+      const normalizedContract = toriiAddress(contract);
+      const cachedCount = tokenCountCache.get(normalizedContract);
+      const count = cachedCount && cachedCount.expiresAt > Date.now()
+        ? undefined
+        : await query<{ tokens: Pick<ToriiTokenConnection, "totalCount"> }>(countDocument, {
+            contract: normalizedContract,
+          }, requestOptions);
+      if (count) tokenCountCache.set(normalizedContract, { totalCount: count.data.tokens.totalCount, expiresAt: Date.now() + 5_000 });
+      const totalCount = count?.data.tokens.totalCount ?? cachedCount?.totalCount ?? 0;
+      const offset = request.offset ?? 0;
+      const requestedLimit = request.limit ?? 100;
+      const tokenRows = Math.max(0, totalCount - 1);
+      const limit = Math.max(0, Math.min(requestedLimit, tokenRows - offset));
+      if (limit === 0) {
+        return {
+          data: { totalCount, edges: [] },
+          attempts: count?.attempts ?? [],
+        };
+      }
       const result = await query<{ tokens: ToriiTokenConnection }>(document, {
-        contract: toriiAddress(contract),
-        offset: request.offset ?? 0,
-        limit: request.limit ?? 100,
+        contract: normalizedContract,
+        offset,
+        limit,
       }, requestOptions);
-      return { ...result, data: result.data.tokens };
+      return {
+        ...result,
+        data: { ...result.data.tokens, totalCount },
+        attempts: [...(count?.attempts ?? []), ...result.attempts],
+      };
     },
   };
 }

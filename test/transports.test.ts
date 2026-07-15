@@ -292,18 +292,36 @@ describe("RPC transports", () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async (_input, init) => {
       const request = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
       requests.push(request);
-      return json({ data: { tokens: { totalCount: 0, edges: [] } } });
+      return json({ data: { tokens: { totalCount: 31, edges: [] } } });
     });
     const torii = createToriiGraphqlTransport({ url: "https://torii.example", fetch });
 
     await torii.tokens("0x3a5644", { offset: 20, limit: 10 });
 
-    expect(requests).toHaveLength(1);
+    expect(requests).toHaveLength(2);
     expect(requests[0]?.variables).toEqual({
+      contract: `0x${"3a5644".padStart(64, "0")}`,
+    });
+    expect(requests[1]?.variables).toEqual({
       contract: `0x${"3a5644".padStart(64, "0")}`,
       offset: 20,
       limit: 10,
     });
+  });
+
+  it("bounds token pages before Torii's synthetic contract row", async () => {
+    const requests: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
+      requests.push(request);
+      return json({ data: { tokens: { totalCount: 83, edges: [] } } });
+    });
+    const torii = createToriiGraphqlTransport({ url: "https://torii.example", fetch });
+
+    await torii.tokens("0x123", { offset: 0, limit: 200 });
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.variables.limit).toBe(82);
   });
 
   it("traces Torii model pages without logging filters or endpoints", async () => {
