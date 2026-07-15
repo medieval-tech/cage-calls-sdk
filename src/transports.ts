@@ -627,7 +627,7 @@ export function createToriiGraphqlTransport(options: { url: string } & HttpOptio
     async tokens(contract, request = {}, requestOptions) {
       const document = "query CageCallsTokens($contract:String,$offset:Int,$limit:Int){tokens(contractAddress:$contract,offset:$offset,limit:$limit){totalCount edges{node{tokenMetadata{__typename ... on ERC721__Token{tokenId contractAddress metadata metadataName metadataDescription metadataAttributes imagePath} ... on ERC1155__Token{tokenId contractAddress metadata metadataName metadataDescription metadataAttributes imagePath}}}}}}";
       const result = await query<{ tokens: ToriiTokenConnection }>(document, {
-        contract: normalizeAddress(contract),
+        contract: toriiAddress(contract),
         offset: request.offset ?? 0,
         limit: request.limit ?? 100,
       }, requestOptions);

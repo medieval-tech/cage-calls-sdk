@@ -74,6 +74,48 @@ describe("relic ownership source policy", () => {
     expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["get_relics"]);
   });
 
+  it("continues an interrupted Torii feed through RPC without restarting or duplicating relics", async () => {
+    const rpc = createMockRpcTransport({
+      calls: {
+        get_relic_feed: (request) => {
+          const cursor = BigInt(request.calldata?.[0] ?? "0");
+          return encodeRelicRows([{ tokenId: cursor, owner }]);
+        },
+      },
+    });
+    const baseTorii = createMockToriiTransport();
+    const tokens = vi.fn(async (_contract, request?: { offset?: number }) => {
+      if (request?.offset) throw new Error("Torii temporarily unavailable");
+      return {
+        data: {
+          totalCount: 3,
+          pageInfo: { hasNextPage: true, endCursor: "relic-3" },
+          edges: [{ cursor: "relic-3", node: { tokenMetadata: toriiToken(3n, SEPOLIA_DEV_PRESET.contracts.RelicNFT) } }],
+        },
+        attempts: [],
+      };
+    });
+    const torii = { ...baseTorii, tokens };
+    const upgraded = {
+      ...SEPOLIA_DEV_PRESET,
+      capabilities: { ...SEPOLIA_DEV_PRESET.capabilities, relicFeed: true },
+    };
+    const client = createCageCallsClient({ network: upgraded, transports: { rpc, torii } });
+
+    const first = await client.relics.feed({ limit: 1 });
+    const second = await client.relics.feed({ limit: 1, cursor: first.data.cursor! });
+    const third = await client.relics.feed({ limit: 1, cursor: second.data.cursor! });
+
+    expect(first.data.items.map((relic) => relic.tokenId)).toEqual([3n]);
+    expect(second.data.items.map((relic) => relic.tokenId)).toEqual([2n]);
+    expect(third.data.items.map((relic) => relic.tokenId)).toEqual([1n]);
+    expect(first.data.cursor).toBeLessThan(0n);
+    expect(second.data.cursor).toBeLessThan(0n);
+    expect(tokens).toHaveBeenCalledTimes(2);
+    expect(rpc.calls.filter((call) => call.entrypoint === "get_relic_feed").map((call) => call.calldata?.[0])).toEqual(["2", "1"]);
+    expect(second.meta.warnings.map((warning) => warning.code)).toContain("TORII_UNAVAILABLE");
+  });
+
   it("trusts known-disabled preset capabilities without probing missing entrypoints", async () => {
     const rpc = createMockRpcTransport();
     const torii = createMockToriiTransport({

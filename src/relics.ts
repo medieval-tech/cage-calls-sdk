@@ -56,6 +56,70 @@ export interface RelicsRepository {
   owner(tokenId: bigint, options?: RequestOptions): Promise<DataResult<Address>>;
 }
 
+type DecodedRelicFeedCursor =
+  | { kind: "start" }
+  | { kind: "legacy-torii"; offset: number }
+  | { kind: "torii"; offset: number; tokenRows: number; rpcCursor: bigint }
+  | { kind: "rpc"; rpcCursor: bigint };
+
+const TORII_TOKEN_OFFSET_WINDOW = 1_000;
+
+function encodeOpaqueRelicFeedCursor(value: string): bigint {
+  let encoded = 0n;
+  for (let index = 0; index < value.length; index += 1) {
+    const byte = value.charCodeAt(index);
+    if (byte > 0x7f) throw new ValidationError("Relic feed cursor contains unsupported characters.");
+    encoded = (encoded << 8n) | BigInt(byte);
+  }
+  return -(encoded + 1n);
+}
+
+function decodeOpaqueRelicFeedCursor(cursor: bigint): string {
+  let encoded = -cursor - 1n;
+  const bytes: number[] = [];
+  while (encoded > 0n) {
+    bytes.unshift(Number(encoded & 0xffn));
+    encoded >>= 8n;
+  }
+  return String.fromCharCode(...bytes);
+}
+
+function toriiFeedCursor(offset: number, tokenRows: number, rpcCursor: bigint): bigint {
+  return encodeOpaqueRelicFeedCursor(`t|${offset}|${tokenRows}|${rpcCursor}`);
+}
+
+function rpcFeedCursor(rpcCursor: bigint): bigint {
+  return encodeOpaqueRelicFeedCursor(`r|${rpcCursor}`);
+}
+
+function decodeFeedCursor(cursor: bigint | undefined): DecodedRelicFeedCursor {
+  if (cursor === undefined || cursor === 0n) return { kind: "start" };
+  if (cursor > 0n) {
+    const offset = Number(cursor);
+    if (!Number.isSafeInteger(offset)) throw new ValidationError("Relic feed cursor is too large.");
+    return { kind: "legacy-torii", offset };
+  }
+
+  const decoded = decodeOpaqueRelicFeedCursor(cursor);
+  const parts = decoded.split("|");
+  try {
+    if (parts[0] === "t" && parts.length === 4) {
+      const offset = Number(parts[1]);
+      const tokenRows = Number(parts[2]);
+      if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(tokenRows) || tokenRows < offset) {
+        throw new Error("invalid offset");
+      }
+      return { kind: "torii", offset, tokenRows, rpcCursor: BigInt(parts[3] ?? "") };
+    }
+    if (parts[0] === "r" && parts.length === 2) {
+      return { kind: "rpc", rpcCursor: BigInt(parts[1] ?? "") };
+    }
+  } catch {
+    // Fall through to the stable validation error below.
+  }
+  throw new ValidationError("Relic feed cursor is invalid.");
+}
+
 function parseAttributes(value: unknown): RelicMetadataAttribute[] {
   const source = typeof value === "string" ? (() => { try { return JSON.parse(value) as unknown; } catch { return []; } })() : value;
   if (!Array.isArray(source)) return [];
@@ -460,62 +524,100 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       const warnings: DataWarning[] = [];
       const size = clampPageSize(input.limit, 20, 20);
       const metadata = input.metadata ?? "external";
+      const cursorState = decodeFeedCursor(input.cursor);
+      let toriiReturnedEmpty = false;
 
-      if (context.torii) {
-        try {
-          const offset = Number(input.cursor ?? 0n);
-          if (!Number.isSafeInteger(offset)) throw new ValidationError("Relic feed cursor is too large.");
-          const response = await context.torii.tokens(context.network.contracts.RelicNFT, { offset, limit: size }, options);
-          attempts.push(...response.attempts);
-          const toriiItems = response.data.edges.flatMap((edge) => {
-            const mapped = edge.node.tokenMetadata ? mapToriiRelic(edge.node.tokenMetadata, context.network.contracts.RelicNFT) : undefined;
-            return mapped ? [mapped] : [];
+      if (context.torii && cursorState.kind !== "rpc") {
+        const offset = cursorState.kind === "torii" || cursorState.kind === "legacy-torii"
+          ? cursorState.offset
+          : 0;
+        const toriiLimit = cursorState.kind === "torii"
+          ? Math.min(cursorState.tokenRows, TORII_TOKEN_OFFSET_WINDOW)
+          : TORII_TOKEN_OFFSET_WINDOW;
+        const exceedsToriiWindow = offset >= toriiLimit;
+        if (exceedsToriiWindow) {
+          warnings.push({
+            code: "TORII_PAGINATION_LIMIT",
+            message: "Torii's token query window was exhausted; relic enumeration continued through the aggregate RPC view.",
+            source: "torii",
           });
-          if (toriiItems.length > 0) {
-            let items = toriiItems;
-            const needsRpc = metadata === "onchain"
-              ? items.map((relic) => relic.tokenId)
-              : items.filter((relic) => !metadataComplete(relic)).map((relic) => relic.tokenId);
-            if (needsRpc.length > 0) {
-              try {
-                const hydrated = await getMany(needsRpc, { ...options, metadata });
-                attempts.push(...hydrated.meta.attempts);
-                warnings.push(...hydrated.meta.warnings);
-                const byId = new Map(hydrated.data.map((relic) => [relic.tokenId.toString(), relic]));
-                items = items.map((relic) => mergeRelic(relic, byId.get(relic.tokenId.toString()) ?? relic));
-              } catch (error) {
-                attempts.push(...transportAttemptsFromError(error));
-                warnings.push({
-                  code: "TORII_RELIC_ENRICHMENT_FAILED",
-                  message: "Torii relic inventory was available, but structured onchain data could not be enriched through RPC.",
-                  source: "starknet-rpc",
-                });
-              }
-            }
-            const next = BigInt(offset + response.data.edges.length);
-            const complete = metadata === "onchain" ? items.every(onchainComplete) : items.every(metadataComplete);
-            return toResult(
-              context,
-              startedAt,
-              "torii",
-              { items, cursor: next, hasMore: Number(next) < response.data.totalCount },
-              attempts,
-              complete,
-              warnings,
+        }
+        if (!exceedsToriiWindow) {
+          try {
+            const response = await context.torii.tokens(
+              context.network.contracts.RelicNFT,
+              { offset, limit: Math.min(size, toriiLimit - offset) },
+              options,
             );
+            attempts.push(...response.attempts);
+            const toriiItems = response.data.edges.flatMap((edge) => {
+              const mapped = edge.node.tokenMetadata ? mapToriiRelic(edge.node.tokenMetadata, context.network.contracts.RelicNFT) : undefined;
+              return mapped ? [mapped] : [];
+            });
+            if (toriiItems.length > 0) {
+              let items = toriiItems;
+              const needsRpc = metadata === "onchain"
+                ? items.map((relic) => relic.tokenId)
+                : items.filter((relic) => !metadataComplete(relic)).map((relic) => relic.tokenId);
+              if (needsRpc.length > 0) {
+                try {
+                  const hydrated = await getMany(needsRpc, { ...options, metadata });
+                  attempts.push(...hydrated.meta.attempts);
+                  warnings.push(...hydrated.meta.warnings);
+                  const byId = new Map(hydrated.data.map((relic) => [relic.tokenId.toString(), relic]));
+                  items = items.map((relic) => mergeRelic(relic, byId.get(relic.tokenId.toString()) ?? relic));
+                } catch (error) {
+                  attempts.push(...transportAttemptsFromError(error));
+                  warnings.push({
+                    code: "TORII_RELIC_ENRICHMENT_FAILED",
+                    message: "Torii relic inventory was available, but structured onchain data could not be enriched through RPC.",
+                    source: "starknet-rpc",
+                  });
+                }
+              }
+              const nextOffset = offset + response.data.edges.length;
+              const tokenRows = Math.max(0, response.data.totalCount - 1);
+              const hasMore = nextOffset < tokenRows;
+              const oldestTokenId = toriiItems.at(-1)?.tokenId ?? 0n;
+              const nextRpcCursor = oldestTokenId > 1n ? oldestTokenId - 1n : 0n;
+              const next = hasMore
+                ? nextOffset >= Math.min(tokenRows, TORII_TOKEN_OFFSET_WINDOW)
+                  ? rpcFeedCursor(nextRpcCursor)
+                  : toriiFeedCursor(nextOffset, tokenRows, nextRpcCursor)
+                : 0n;
+              const complete = metadata === "onchain" ? items.every(onchainComplete) : items.every(metadataComplete);
+              return toResult(
+                context,
+                startedAt,
+                "torii",
+                { items, cursor: next, hasMore },
+                attempts,
+                complete,
+                warnings,
+              );
+            }
+            toriiReturnedEmpty = cursorState.kind === "start" && response.data.totalCount === 0;
+            if (cursorState.kind === "torii" || response.data.edges.length > 0) {
+              return toResult(context, startedAt, "torii", { items: [], cursor: 0n, hasMore: false }, attempts, true, warnings);
+            }
+          } catch (error) {
+            attempts.push(...transportAttemptsFromError(error));
+            warnings.push({ code: "TORII_UNAVAILABLE", message: "Torii relic inventory lookup failed.", source: "torii" });
           }
-        } catch (error) {
-          attempts.push(...transportAttemptsFromError(error));
-          warnings.push({ code: "TORII_UNAVAILABLE", message: "Torii relic inventory lookup failed.", source: "torii" });
         }
       }
 
       const supported = context.capabilities.has("relicFeed") || await context.capabilities.probe("relicFeed", options.signal);
       if (supported) {
-        const response = await rpcCall(context, "get_relic_feed", [...encodeU256(input.cursor ?? 0n), size.toString()], options);
+        const rpcCursor = cursorState.kind === "torii" || cursorState.kind === "rpc"
+          ? cursorState.rpcCursor
+          : cursorState.kind === "legacy-torii"
+            ? BigInt(cursorState.offset)
+            : 0n;
+        const response = await rpcCall(context, "get_relic_feed", [...encodeU256(rpcCursor), size.toString()], options);
         attempts.push(...response.attempts);
         const rows = decodeRelicRowsRpc(response.data);
-        if (context.torii && rows.length > 0) {
+        if (context.torii && toriiReturnedEmpty && rows.length > 0) {
           warnings.push({
             code: "TORII_INVENTORY_EMPTY",
             message: "Torii returned no RelicNFT inventory even though the contract returned relics.",
@@ -525,8 +627,13 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
         const items = await mapConcurrent(rows, context.budget.maxConcurrency, (relic) => hydrateJson(context, relic, attempts, warnings, { ...options, metadata }));
         const oldest = items.at(-1)?.tokenId ?? 0n;
         const cursor = oldest > 1n ? oldest - 1n : 0n;
+        const hasMore = items.length === size && cursor > 0n;
         const complete = metadata === "onchain" ? items.every(onchainComplete) : items.every(metadataComplete);
-        return toResult(context, startedAt, "starknet-rpc", { items, cursor, hasMore: items.length === size && cursor > 0n }, attempts, complete, warnings);
+        return toResult(context, startedAt, "starknet-rpc", {
+          items,
+          cursor: context.torii && hasMore ? rpcFeedCursor(cursor) : cursor,
+          hasMore,
+        }, attempts, complete, warnings);
       }
       if (context.torii) {
         warnings.push({

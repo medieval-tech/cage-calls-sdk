@@ -280,6 +280,25 @@ describe("RPC transports", () => {
     expect(requests[2]?.variables.offset).toBe(1);
   });
 
+  it("pads token contract addresses for Torii filters", async () => {
+    const requests: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
+      requests.push(request);
+      return json({ data: { tokens: { totalCount: 0, edges: [] } } });
+    });
+    const torii = createToriiGraphqlTransport({ url: "https://torii.example", fetch });
+
+    await torii.tokens("0x3a5644", { offset: 20, limit: 10 });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.variables).toEqual({
+      contract: `0x${"3a5644".padStart(64, "0")}`,
+      offset: 20,
+      limit: 10,
+    });
+  });
+
   it("traces Torii model pages without logging filters or endpoints", async () => {
     const logger = { debug: vi.fn() };
     const fetch = vi.fn<typeof globalThis.fetch>(async () => json({

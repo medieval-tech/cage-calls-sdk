@@ -31,6 +31,30 @@ if (unknown.length > 0) {
 const rows = [];
 let mismatch = false;
 
+async function countToriiTokens(torii, contract) {
+  const tokenIds = new Set();
+  const countResult = await torii.tokens(contract, { offset: 0, limit: 0 });
+  const rawTotal = countResult.data.totalCount;
+  const tokenRowCount = Math.max(0, rawTotal - 1);
+  const result = tokenRowCount > 0
+    ? await torii.tokens(contract, { offset: 0, limit: Math.min(1000, tokenRowCount) })
+    : countResult;
+  for (const edge of result.data.edges) {
+    const tokenId = edge.node.tokenMetadata?.tokenId;
+    if (tokenId) tokenIds.add(BigInt(tokenId).toString());
+  }
+
+  // Torii stores one collection-level row alongside the ERC721 token rows. Its
+  // current token resolver cannot paginate past the 1,000-row offset window,
+  // so totalCount is the authoritative count once that window is exceeded.
+  const count = BigInt(tokenRowCount);
+  if (rawTotal <= 1000 && BigInt(tokenIds.size) !== count) {
+    throw new Error(`Torii returned ${tokenIds.size} token IDs for ${rawTotal} collection rows.`);
+  }
+
+  return { count, rawTotal, sampleTokenId: tokenIds.values().next().value };
+}
+
 for (const name of networkNames) {
   const network = deployments[name];
   const rpcUrl = process.env[rpcEnvironmentKeys[name]] || network.cartridgeRpcUrl;
@@ -38,20 +62,19 @@ for (const name of networkNames) {
   const torii = createToriiGraphqlTransport({ url: network.toriiUrl, maxConcurrency: 2 });
 
   try {
-    const [nextTokenIdResult, toriiResult] = await Promise.all([
+    const [nextTokenIdResult, toriiInventory] = await Promise.all([
       rpc.call({
         contractAddress: network.contracts.RelicNFT,
         entrypoint: "next_token_id",
         calldata: [],
       }),
-      torii.tokens(network.contracts.RelicNFT, { offset: 0, limit: 1 }),
+      countToriiTokens(torii, network.contracts.RelicNFT),
     ]);
 
     const nextTokenId = decodeSingleU256(nextTokenIdResult.data, `${name}.next_token_id`);
     const onchainCount = nextTokenId > 0n ? nextTokenId - 1n : 0n;
-    const toriiCount = BigInt(toriiResult.data.totalCount);
-    const sampleTokenIdValue = toriiResult.data.edges[0]?.node.tokenMetadata?.tokenId;
-    const sampleTokenId = sampleTokenIdValue ? BigInt(sampleTokenIdValue) : undefined;
+    const toriiCount = toriiInventory.count;
+    const sampleTokenId = toriiInventory.sampleTokenId ? BigInt(toriiInventory.sampleTokenId) : undefined;
     let sampleOwner = "-";
     let sampleUri = "-";
 
@@ -78,6 +101,7 @@ for (const name of networkNames) {
       network: name,
       onchain: onchainCount.toString(),
       torii: toriiCount.toString(),
+      toriiRows: toriiInventory.rawTotal.toString(),
       status: matches ? "ok" : "MISMATCH",
       sampleToken: sampleTokenId?.toString() ?? "-",
       sampleOwner,
@@ -89,6 +113,7 @@ for (const name of networkNames) {
       network: name,
       onchain: "-",
       torii: "-",
+      toriiRows: "-",
       status: "ERROR",
       sampleToken: "-",
       sampleOwner: "-",
