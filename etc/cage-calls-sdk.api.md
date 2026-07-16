@@ -128,10 +128,14 @@ export interface AdminRepository {
         cursor?: string;
     }, options?: RequestOptions): Promise<DataResult<Page<RegisteredAsset>>>;
     // (undocumented)
+    registeredOraclesAll(options?: RequestOptions): Promise<DataResult<RegisteredAsset[]>>;
+    // (undocumented)
     registeredTokens(input?: {
         limit?: number;
         cursor?: string;
     }, options?: RequestOptions): Promise<DataResult<Page<RegisteredAsset>>>;
+    // (undocumented)
+    registeredTokensAll(options?: RequestOptions): Promise<DataResult<RegisteredAsset[]>>;
     // (undocumented)
     roles(options?: RequestOptions): Promise<DataResult<RoleMembership[]>>;
 }
@@ -454,40 +458,40 @@ export interface CageCallsNetwork {
 }
 
 // @public (undocumented)
-export type CageCallsQueryKey = readonly ["cage-calls", string, ...readonly unknown[]];
+export type CageCallsQueryKey = readonly ["cage-calls", ...readonly unknown[]];
 
 // @public (undocumented)
 export const cageCallsQueryKeys: Readonly<{
-    all: () => readonly ["cage-calls", string, ...unknown[]];
+    all: () => CageCallsQueryKey;
     fighters: (input?: {
         active?: boolean;
         limit?: number;
         cursor?: string;
-    }) => readonly ["cage-calls", string, ...unknown[]];
-    fightersMany: (fighterIds: readonly bigint[]) => readonly ["cage-calls", string, ...unknown[]];
-    fighter: (fighterId: bigint) => readonly ["cage-calls", string, ...unknown[]];
+    }) => readonly ["cage-calls", ...unknown[]];
+    fightersMany: (fighterIds: readonly bigint[]) => readonly ["cage-calls", ...unknown[]];
+    fighter: (fighterId: bigint) => readonly ["cage-calls", ...unknown[]];
     fights: (input?: {
         limit?: number;
         cursor?: string;
         seasonId?: bigint;
-    }) => readonly ["cage-calls", string, ...unknown[]];
-    fight: (fightId: bigint) => readonly ["cage-calls", string, ...unknown[]];
+    }) => readonly ["cage-calls", ...unknown[]];
+    fight: (fightId: bigint) => readonly ["cage-calls", ...unknown[]];
     fightFeed: (input?: {
         limit?: number;
         cursor?: bigint;
         viewer?: Address;
-    }) => readonly ["cage-calls", string, ...unknown[]];
-    fightFeedMany: (fightIds: readonly bigint[], viewer?: Address) => readonly ["cage-calls", string, ...unknown[]];
+    }) => readonly ["cage-calls", ...unknown[]];
+    fightFeedMany: (fightIds: readonly bigint[], viewer?: Address) => readonly ["cage-calls", ...unknown[]];
     fightBuys: (fightId: bigint, input?: {
         offset?: number;
         limit?: number;
-    }) => readonly ["cage-calls", string, ...unknown[]];
+    }) => readonly ["cage-calls", ...unknown[]];
     fightEvents: (input?: {
         limit?: number;
         cursor?: bigint;
         viewer?: Address;
         now?: bigint;
-    }) => readonly ["cage-calls", string, ...unknown[]];
+    }) => readonly ["cage-calls", ...unknown[]];
     fightEvent: (eventName: string, input?: {
         seasonId?: bigint;
         fightIds?: readonly bigint[];
@@ -496,48 +500,48 @@ export const cageCallsQueryKeys: Readonly<{
         cursor?: bigint;
         limit?: number;
         now?: bigint;
-    }) => readonly ["cage-calls", string, ...unknown[]];
-    event: (ref: EventRef) => readonly ["cage-calls", string, ...unknown[]];
-    accountEvent: (account: Address, ref: EventRef) => readonly ["cage-calls", string, ...unknown[]];
-    accountPortfolio: (account: Address) => readonly ["cage-calls", string, ...unknown[]];
+    }) => readonly ["cage-calls", ...unknown[]];
+    event: (ref: EventRef) => readonly ["cage-calls", ...unknown[]];
+    accountEvent: (account: Address, ref: EventRef) => readonly ["cage-calls", ...unknown[]];
+    accountPortfolio: (account: Address) => readonly ["cage-calls", ...unknown[]];
     accountFightStates: (account: Address, input?: {
         limit?: number;
         cursor?: bigint;
-    }) => readonly ["cage-calls", string, ...unknown[]];
+    }) => readonly ["cage-calls", ...unknown[]];
     portfolio: (account: Address, input?: {
         limit?: number;
         cursor?: string;
-    }) => readonly ["cage-calls", string, ...unknown[]];
+    }) => readonly ["cage-calls", ...unknown[]];
     markets: (input?: {
         limit?: number;
         cursor?: string;
-    }) => readonly ["cage-calls", string, ...unknown[]];
-    market: (marketId: bigint) => readonly ["cage-calls", string, ...unknown[]];
-    relics: (input?: RelicFeedInput) => readonly ["cage-calls", string, ...unknown[]];
-    relicInventory: (input?: RelicCollectionInput) => readonly ["cage-calls", string, ...unknown[]];
-    relicCollection: (input?: RelicCollectionInput) => readonly ["cage-calls", string, ...unknown[]];
-    relicStats: (filter?: RelicStatsFilter) => readonly ["cage-calls", string, ...unknown[]];
-    relicsMany: (tokenIds: readonly bigint[]) => readonly ["cage-calls", string, ...unknown[]];
-    relic: (tokenId: bigint) => readonly ["cage-calls", string, ...unknown[]];
-    ownedRelics: (account: Address) => readonly ["cage-calls", string, ...unknown[]];
-    ownedRelicInventory: (account: Address) => readonly ["cage-calls", string, ...unknown[]];
-    gacha: (fightId: bigint) => readonly ["cage-calls", string, ...unknown[]];
-    gachaPools: (fightIds: readonly bigint[]) => readonly ["cage-calls", string, ...unknown[]];
-    gachaUser: (fightId: bigint, account: Address) => readonly ["cage-calls", string, ...unknown[]];
-    gachaUsers: (fightIds: readonly bigint[], account: Address) => readonly ["cage-calls", string, ...unknown[]];
+    }) => readonly ["cage-calls", ...unknown[]];
+    market: (marketId: bigint) => readonly ["cage-calls", ...unknown[]];
+    relics: (input?: RelicFeedInput) => readonly ["cage-calls", ...unknown[]];
+    relicInventory: (input?: RelicCollectionInput) => readonly ["cage-calls", ...unknown[]];
+    relicCollection: (input?: RelicCollectionInput) => readonly ["cage-calls", ...unknown[]];
+    relicStats: (filter?: RelicStatsFilter) => readonly ["cage-calls", ...unknown[]];
+    relicsMany: (tokenIds: readonly bigint[]) => readonly ["cage-calls", ...unknown[]];
+    relic: (tokenId: bigint) => readonly ["cage-calls", ...unknown[]];
+    ownedRelics: (account: Address) => readonly ["cage-calls", ...unknown[]];
+    ownedRelicInventory: (account: Address) => readonly ["cage-calls", ...unknown[]];
+    gacha: (fightId: bigint) => readonly ["cage-calls", ...unknown[]];
+    gachaPools: (fightIds: readonly bigint[]) => readonly ["cage-calls", ...unknown[]];
+    gachaUser: (fightId: bigint, account: Address) => readonly ["cage-calls", ...unknown[]];
+    gachaUsers: (fightIds: readonly bigint[], account: Address) => readonly ["cage-calls", ...unknown[]];
     gachaTokens: (fightId: bigint, input?: {
         cursor?: bigint;
         limit?: number;
-    }) => readonly ["cage-calls", string, ...unknown[]];
-    tokens: (account?: Address, detail?: string) => readonly ["cage-calls", string, ...unknown[]];
+    }) => readonly ["cage-calls", ...unknown[]];
+    tokens: (account?: Address, detail?: string) => readonly ["cage-calls", ...unknown[]];
     activity: (input?: {
         limit?: number;
         cursor?: string;
         keys?: string[];
-    }) => readonly ["cage-calls", string, ...unknown[]];
-    analytics: () => readonly ["cage-calls", string, ...unknown[]];
-    analyticsSummary: (filter?: AnalyticsSummaryFilter) => readonly ["cage-calls", string, ...unknown[]];
-    admin: (detail?: string) => readonly ["cage-calls", string, ...unknown[]];
+    }) => readonly ["cage-calls", ...unknown[]];
+    analytics: () => readonly ["cage-calls", ...unknown[]];
+    analyticsSummary: (filter?: AnalyticsSummaryFilter) => readonly ["cage-calls", ...unknown[]];
+    admin: (detail?: string) => readonly ["cage-calls", ...unknown[]];
 }>;
 
 // @public (undocumented)

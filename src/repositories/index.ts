@@ -786,14 +786,57 @@ export function createMarketsRepository(context: RepositoryContext): MarketsRepo
     list: page,
     async catalog(input = {}, options = {}) {
       const startedAt = context.now();
-      if (!context.torii) throw new UnsupportedCapabilityError("market catalog without Torii");
+      const rpcCatalog = async (toriiError?: unknown) => {
+        const cursor = input.cursor?.startsWith("rpc:") ? BigInt(input.cursor.slice(4) || "0") : 0n;
+        const feed = await createFightsRepository(context).feed({
+          cursor,
+          ...(input.limit === undefined ? {} : { limit: input.limit }),
+        }, options);
+        const items = feed.data.items.map((fight): MarketCatalogItem => ({
+          market: {
+            marketId: fight.marketId,
+            creator: normalizeAddress("0"),
+            createdAt: fight.marketCreatedAt,
+            conditionId: fight.conditionId,
+            oracle: fight.oracle,
+            outcomeSlotCount: fight.outcomeSlotCount,
+            collateralToken: fight.collateralToken,
+            startAt: fight.startAt,
+            endAt: fight.endAt,
+            resolveAt: fight.resolveAt,
+            resolvedAt: fight.resolvedAt,
+          },
+          fight,
+          vaultNumerators: fight.vaultNumerators,
+          vaultDenominator: fight.vaultDenominator,
+        }));
+        const warnings: DataWarning[] = [
+          ...(toriiError ? [{
+            code: "CAPABILITY_FALLBACK",
+            message: "Market catalog used the FightFactory aggregate view because Torii was unavailable.",
+            source: "starknet-rpc" as const,
+          }] : []),
+          ...feed.meta.warnings,
+        ];
+        return result(context, startedAt, "starknet-rpc", {
+          items,
+          ...(feed.data.cursor === undefined ? {} : { cursor: `rpc:${feed.data.cursor}` }),
+          hasMore: feed.data.hasMore,
+        }, [
+          ...(toriiError ? transportAttemptsFromError(toriiError) : []),
+          ...feed.meta.attempts,
+        ], false, warnings);
+      };
+      if (input.cursor?.startsWith("rpc:")) return rpcCatalog();
       try {
+        if (!context.torii) throw new UnsupportedCapabilityError("market catalog without Torii");
+        const toriiCursor = input.cursor?.startsWith("torii:") ? input.cursor.slice(6) : input.cursor;
         const [marketPage, fights, numerators, denominators] = await Promise.all([
           context.torii.model<Record<string, unknown>>({
             model: "Market",
             selection: MARKET_SELECTION,
             first: clampPageSize(input.limit, context.budget.pageSize, 20),
-            ...(input.cursor ? { after: input.cursor } : {}),
+            ...(toriiCursor ? { after: toriiCursor } : {}),
           }, options),
           readAllToriiModels(context, { model: "Fight", selection: FIGHT_SELECTION }, mapToriiFight, options),
           readAllToriiModels(context, { model: "VaultNumerator", selection: VAULT_NUMERATOR_SELECTION }, (node) => ({
@@ -833,7 +876,7 @@ export function createMarketsRepository(context: RepositoryContext): MarketsRepo
         const warnings = [...fights.warnings, ...numerators.warnings, ...denominators.warnings];
         return result(context, startedAt, "torii", {
           items,
-          ...(marketPage.data.pageInfo.endCursor ? { cursor: marketPage.data.pageInfo.endCursor } : {}),
+          ...(marketPage.data.pageInfo.endCursor ? { cursor: `torii:${marketPage.data.pageInfo.endCursor}` } : {}),
           hasMore: marketPage.data.pageInfo.hasNextPage,
         }, [
           ...marketPage.attempts,
@@ -842,7 +885,14 @@ export function createMarketsRepository(context: RepositoryContext): MarketsRepo
           ...denominators.attempts,
         ], fights.complete && numerators.complete && denominators.complete, warnings);
       } catch (error) {
-        throw new AllSourcesFailedError("markets.catalog", transportAttemptsFromError(error));
+        try {
+          return await rpcCatalog(error);
+        } catch (rpcError) {
+          throw new AllSourcesFailedError("markets.catalog", [
+            ...transportAttemptsFromError(error),
+            ...transportAttemptsFromError(rpcError),
+          ]);
+        }
       }
     },
     async state(marketId, outcomeSlotCount, conditionId, options = {}) {

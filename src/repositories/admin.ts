@@ -32,6 +32,8 @@ export interface AdminRepository {
   roles(options?: RequestOptions): Promise<DataResult<RoleMembership[]>>;
   registeredTokens(input?: { limit?: number; cursor?: string }, options?: RequestOptions): Promise<DataResult<Page<RegisteredAsset>>>;
   registeredOracles(input?: { limit?: number; cursor?: string }, options?: RequestOptions): Promise<DataResult<Page<RegisteredAsset>>>;
+  registeredTokensAll(options?: RequestOptions): Promise<DataResult<RegisteredAsset[]>>;
+  registeredOraclesAll(options?: RequestOptions): Promise<DataResult<RegisteredAsset[]>>;
   marketsPaused(options?: RequestOptions): Promise<DataResult<boolean>>;
   oracleWinner(marketId: bigint, options?: RequestOptions): Promise<DataResult<bigint | undefined>>;
 }
@@ -40,29 +42,30 @@ export function createAdminRepository(context: RepositoryContext): AdminReposito
   const rpc = async (contract: ContractName, entrypoint: string, calldata: string[], options: RequestOptions) =>
     context.rpc.call({ contractAddress: context.network.contracts[contract], entrypoint, calldata }, options);
 
+  const assetSelection = (model: "RegisteredToken" | "RegisteredOracle") => model === "RegisteredToken"
+    ? ["contract_address", "name", "symbol", "decimals"]
+    : ["contract_address", "name", "description"];
+  const mapAsset = (node: Record<string, unknown>): RegisteredAsset => {
+    const item: RegisteredAsset = {
+      contractAddress: normalizeAddress(String(node.contract_address)),
+      active: true,
+    };
+    if (node.name !== undefined) item.name = scalarString(node.name, "name");
+    if (node.symbol !== undefined) item.symbol = scalarString(node.symbol, "symbol");
+    if (node.description !== undefined) item.description = scalarString(node.description, "description");
+    if (node.decimals !== undefined) item.decimals = scalarNumber(node.decimals, "decimals");
+    return item;
+  };
   const assets = async (model: "RegisteredToken" | "RegisteredOracle", input: { limit?: number; cursor?: string }, options: RequestOptions) => {
     const startedAt = context.now();
     if (!context.torii) throw new UnsupportedCapabilityError(`${model} enumeration without Torii`);
-    const selection = model === "RegisteredToken"
-      ? ["contract_address", "name", "symbol", "decimals"]
-      : ["contract_address", "name", "description"];
     const response = await context.torii.model<Record<string, unknown>>({
       model,
-      selection,
+      selection: assetSelection(model),
       first: Math.min(Math.max(input.limit ?? 50, 1), context.budget.pageSize),
       ...(input.cursor ? { after: input.cursor } : {}),
     }, options);
-    const items = response.data.edges.map(({ node }): RegisteredAsset => {
-      const item: RegisteredAsset = {
-        contractAddress: normalizeAddress(String(node.contract_address)),
-        active: true,
-      };
-      if (node.name !== undefined) item.name = scalarString(node.name, "name");
-      if (node.symbol !== undefined) item.symbol = scalarString(node.symbol, "symbol");
-      if (node.description !== undefined) item.description = scalarString(node.description, "description");
-      if (node.decimals !== undefined) item.decimals = scalarNumber(node.decimals, "decimals");
-      return item;
-    });
+    const items = response.data.edges.map(({ node }) => mapAsset(node));
     return createDataResult({
       data: {
         items,
@@ -72,6 +75,24 @@ export function createAdminRepository(context: RepositoryContext): AdminReposito
       source: "torii",
       complete: true,
       attempts: response.attempts,
+      startedAt,
+      now: context.now,
+      ...(context.logger ? { logger: context.logger } : {}),
+    });
+  };
+  const allAssets = async (model: "RegisteredToken" | "RegisteredOracle", options: RequestOptions) => {
+    const startedAt = context.now();
+    if (!context.torii) throw new UnsupportedCapabilityError(`${model} enumeration without Torii`);
+    const response = await readAllToriiModels(context, {
+      model,
+      selection: assetSelection(model),
+    }, mapAsset, options);
+    return createDataResult({
+      data: response.items,
+      source: "torii",
+      complete: response.complete,
+      attempts: response.attempts,
+      warnings: response.warnings,
       startedAt,
       now: context.now,
       ...(context.logger ? { logger: context.logger } : {}),
@@ -126,6 +147,8 @@ export function createAdminRepository(context: RepositoryContext): AdminReposito
     },
     registeredTokens(input = {}, options = {}) { return assets("RegisteredToken", input, options); },
     registeredOracles(input = {}, options = {}) { return assets("RegisteredOracle", input, options); },
+    registeredTokensAll(options = {}) { return allAssets("RegisteredToken", options); },
+    registeredOraclesAll(options = {}) { return allAssets("RegisteredOracle", options); },
     async marketsPaused(options = {}) {
       const startedAt = context.now();
       const response = await rpc("Markets", "is_paused", [], options).catch(() => rpc("Markets", "paused", [], options));

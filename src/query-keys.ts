@@ -10,7 +10,7 @@ const bigintList = (values: readonly bigint[] | undefined) => values?.map(String
 const stringList = (values: readonly string[] | undefined) => values?.map(String).sort().join(",") ?? "all";
 
 export const cageCallsQueryKeys = Object.freeze({
-  all: () => key("all"),
+  all: (): CageCallsQueryKey => ["cage-calls"],
   fighters: (input?: { active?: boolean; limit?: number; cursor?: string }) => key("fighters", ...(input ? [input.active ?? "all", input.limit ?? "default", input.cursor ?? "start"] : [])),
   fightersMany: (fighterIds: readonly bigint[]) => key("fighters", "many", ...fighterIds.map(String)),
   fighter: (fighterId: bigint) => key("fighter", fighterId.toString()),

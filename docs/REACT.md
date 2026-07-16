@@ -6,21 +6,23 @@ React support is optional and isolated from the framework-neutral entry point.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   CageCallsProvider,
-  useFightEvents,
+  useInfiniteAccountFightStates,
+  useInfiniteMarketCatalog,
 } from "@medieval-tech/cage-calls-sdk/react";
 
 const queryClient = new QueryClient();
 
-function Events() {
-  const query = useFightEvents({ limit: 20 });
-  return <pre>{JSON.stringify(query.data?.data, null, 2)}</pre>;
+function Markets() {
+  const query = useInfiniteMarketCatalog({ limit: 20 });
+  const items = query.data?.pages.flatMap((page) => page.data.items) ?? [];
+  return <button onClick={() => query.fetchNextPage()}>{items.length} markets</button>;
 }
 
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <CageCallsProvider client={cageCallsClient}>
-        <Events />
+        <Markets />
       </CageCallsProvider>
     </QueryClientProvider>
   );
@@ -33,4 +35,11 @@ invalidates affected query keys. Reconnection emits one reconciliation invalidat
 starts a polling loop.
 
 Applications executing transactions should invalidate the exported Cage Calls query keys after a
-successful receipt. Transaction lifecycle state remains outside the SDK.
+successful receipt. `cageCallsQueryKeys.all()` is the root key and is the safest invalidation for
+multi-screen mutations; narrower keys remain available for consumers that can prove the affected
+scope. Transaction lifecycle state remains outside the SDK.
+
+The React entry point includes exhaustive hooks (`useAllFighters`, `useAllFightFeed`,
+`useAllRegisteredTokens`, and `useAllRegisteredOracles`) plus infinite hooks for the market catalog
+and account fight state. Exhaustive hooks obey the SDK traversal budget; infinite hooks expose
+explicit user-driven pagination without client-side cursor loops.

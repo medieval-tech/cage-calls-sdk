@@ -242,4 +242,49 @@ describe("Torii-first indexed reads", () => {
     expect(rpc.calls).toEqual([]);
     expect(rpc.requests).toEqual([]);
   });
+
+  it("reconstructs the market catalog from the FightFactory aggregate when Torii is unavailable", async () => {
+    const rpc = createMockRpcTransport({
+      calls: {
+        get_fight_feed: encodeFightFeed([{ fightId: 84n, marketId: 900n, settled: true, winnerIndex: 1 }]),
+      },
+    });
+    const client = createCageCallsClient({ network: SEPOLIA_DEV_PRESET, transports: { rpc } });
+
+    const response = await client.markets.catalog({ limit: 20 });
+
+    expect(response.meta).toMatchObject({ source: "starknet-rpc", complete: false });
+    expect(response.meta.warnings.map((warning) => warning.code)).toContain("CAPABILITY_FALLBACK");
+    expect(response.data.items).toHaveLength(1);
+    expect(response.data.items[0]).toMatchObject({
+      market: { marketId: 900n },
+      fight: { fightId: 84n },
+    });
+  });
+
+  it("enumerates every registered asset page", async () => {
+    const rows = Array.from({ length: 101 }, (_, index) => ({
+      cursor: `token-${index + 1}`,
+      node: { contract_address: `0x${(index + 1).toString(16)}`, name: `Token ${index + 1}`, symbol: "T", decimals: "18" },
+    }));
+    const torii = createMockToriiTransport({
+      models: {
+        RegisteredToken: (request) => {
+          const secondPage = request.after === "token-100";
+          const edges = secondPage ? rows.slice(100) : rows.slice(0, 100);
+          return {
+            edges,
+            totalCount: rows.length,
+            pageInfo: { hasNextPage: !secondPage, endCursor: edges.at(-1)?.cursor ?? "" },
+          };
+        },
+      },
+    });
+    const client = createCageCallsClient({ network: "mainnet", transports: { rpc: createMockRpcTransport(), torii } });
+
+    const response = await client.admin.registeredTokensAll();
+
+    expect(response.meta.complete).toBe(true);
+    expect(response.data).toHaveLength(101);
+  });
 });

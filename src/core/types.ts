@@ -43,7 +43,7 @@ export interface Page<T, Cursor = string> {
   hasMore: boolean;
 }
 
-export type CageCallsQueryKey = readonly ["cage-calls", string, ...readonly unknown[]];
+export type CageCallsQueryKey = readonly ["cage-calls", ...readonly unknown[]];
 
 export type NetworkName = "mainnet" | "sepolia-dev" | "sepolia-staging";
 

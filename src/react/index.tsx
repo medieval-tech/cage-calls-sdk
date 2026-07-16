@@ -1,5 +1,5 @@
 import { createContext, createElement, useContext, useEffect, useRef, type ReactNode } from "react";
-import { useQuery, useQueryClient, type UseQueryOptions } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData, type UseInfiniteQueryOptions, type UseInfiniteQueryResult, type UseQueryOptions } from "@tanstack/react-query";
 
 import type { CageCallsClient } from "../client.js";
 import type { AccountEventState, AccountFightStatePage, AccountPortfolio, EventRef, PublicEventSnapshot } from "../repositories/aggregates.js";
@@ -28,6 +28,7 @@ import type {
   GachaUserState,
   GachaUserStates,
   Market,
+  MarketCatalogItem,
   MarketPosition,
   MarketState,
   Page,
@@ -50,6 +51,7 @@ export function useCageCallsClient(): CageCallsClient {
 }
 
 type Options<T> = Omit<UseQueryOptions<T, Error>, "queryKey" | "queryFn">;
+type InfiniteOptions<T, TCursor> = Omit<UseInfiniteQueryOptions<T, Error, InfiniteData<T, TCursor>, readonly unknown[], TCursor>, "queryKey" | "queryFn" | "initialPageParam" | "getNextPageParam">;
 type FightersInput = { active?: boolean; limit?: number; cursor?: string };
 type FightsInput = { limit?: number; cursor?: string; seasonId?: bigint };
 type FightFeedInput = { limit?: number; cursor?: bigint; viewer?: Address };
@@ -68,6 +70,11 @@ export function useFighter(fighterId: bigint, options?: Options<DataResult<Fight
 export function useFighters(input: FightersInput = {}, options?: Options<DataResult<Page<Fighter>>>) {
   const client = useCageCallsClient();
   return useQuery({ queryKey: keys.fighters(input), queryFn: ({ signal }) => client.fighters.page(input, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
+export function useAllFighters(input: { active?: boolean } = {}, options?: Options<DataResult<Fighter[]>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: [...keys.fighters(), "all", input.active ?? "all"], queryFn: ({ signal }) => client.fighters.all(input, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
 export function useFightersMany(fighterIds: readonly bigint[], options?: Options<DataResult<Fighter[]>>) {
@@ -93,6 +100,11 @@ export function useFights(input: FightsInput = {}, options?: Options<DataResult<
 export function useFightFeed(input: FightFeedInput = {}, options?: Options<DataResult<Page<FightFeedItem, bigint>>>) {
   const client = useCageCallsClient();
   return useQuery({ queryKey: keys.fightFeed(input), queryFn: ({ signal }) => client.fights.feed(input, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
+export function useAllFightFeed(input: { viewer?: Address } = {}, options?: Options<DataResult<FightFeedItem[]>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: [...keys.fightFeed(), "all", input.viewer ? normalizeAddress(input.viewer) : "none"], queryFn: ({ signal }) => client.fights.feedAll(input, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
 export function useFightFeedMany(fightIds: readonly bigint[], input: { viewer?: Address } = {}, options?: Options<DataResult<FightFeedItem[]>>) {
@@ -132,6 +144,22 @@ export function useAccountFightStates(account: Address, input: { limit?: number;
   return useQuery({ queryKey: keys.accountFightStates(account, input), queryFn: ({ signal }) => client.accounts.fightStates(account, input, { signal }), placeholderData: keepComplete, refetchOnWindowFocus: false, ...options });
 }
 
+export function useInfiniteAccountFightStates(
+  account: Address,
+  input: { limit?: number } = {},
+  options?: InfiniteOptions<DataResult<AccountFightStatePage>, bigint>,
+): UseInfiniteQueryResult<InfiniteData<DataResult<AccountFightStatePage>, bigint>, Error> {
+  const client = useCageCallsClient();
+  return useInfiniteQuery<DataResult<AccountFightStatePage>, Error, InfiniteData<DataResult<AccountFightStatePage>, bigint>, readonly unknown[], bigint>({
+    queryKey: [...keys.accountFightStates(account), "infinite", input.limit ?? "default"],
+    queryFn: ({ signal, pageParam }) => client.accounts.fightStates(account, { ...input, cursor: pageParam }, { signal }),
+    initialPageParam: 0n,
+    getNextPageParam: (lastPage) => lastPage.data.hasMore ? lastPage.data.cursor : undefined,
+    refetchOnWindowFocus: false,
+    ...options,
+  });
+}
+
 export function useFightBuys(fightId: bigint, input: OffsetPageInput = {}, options?: Options<DataResult<Page<FightBuy, number>>>) {
   const client = useCageCallsClient();
   return useQuery({ queryKey: keys.fightBuys(fightId, input), queryFn: ({ signal }) => client.fights.buys(fightId, input, { signal }), refetchOnWindowFocus: false, ...options });
@@ -165,6 +193,26 @@ export function useMarket(marketId: bigint, options?: Options<DataResult<Market>
 export function useMarkets(input: CursorPageInput = {}, options?: Options<DataResult<Page<Market>>>) {
   const client = useCageCallsClient();
   return useQuery({ queryKey: keys.markets(input), queryFn: ({ signal }) => client.markets.page(input, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
+export function useMarketCatalog(input: CursorPageInput = {}, options?: Options<DataResult<Page<MarketCatalogItem>>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: [...keys.markets(), "catalog", input.limit ?? "default", input.cursor ?? "start"], queryFn: ({ signal }) => client.markets.catalog(input, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
+export function useInfiniteMarketCatalog(
+  input: { limit?: number } = {},
+  options?: InfiniteOptions<DataResult<Page<MarketCatalogItem>>, string | undefined>,
+): UseInfiniteQueryResult<InfiniteData<DataResult<Page<MarketCatalogItem>>, string | undefined>, Error> {
+  const client = useCageCallsClient();
+  return useInfiniteQuery<DataResult<Page<MarketCatalogItem>>, Error, InfiniteData<DataResult<Page<MarketCatalogItem>>, string | undefined>, readonly unknown[], string | undefined>({
+    queryKey: [...keys.markets(), "catalog", "infinite", input.limit ?? "default"],
+    queryFn: ({ signal, pageParam }) => client.markets.catalog({ ...input, ...(pageParam ? { cursor: pageParam } : {}) }, { signal }),
+    initialPageParam: undefined,
+    getNextPageParam: (lastPage) => lastPage.data.hasMore ? lastPage.data.cursor : undefined,
+    refetchOnWindowFocus: false,
+    ...options,
+  });
 }
 
 export function useMarketState(marketId: bigint, outcomeSlotCount: number, conditionId?: bigint, options?: Options<DataResult<MarketState>>) {
@@ -335,6 +383,16 @@ export function useRegisteredTokens(input: CursorPageInput = {}, options?: Optio
 export function useRegisteredOracles(input: CursorPageInput = {}, options?: Options<DataResult<Page<RegisteredAsset>>>) {
   const client = useCageCallsClient();
   return useQuery({ queryKey: keys.admin(`oracles:${input.limit ?? "default"}:${input.cursor ?? "start"}`), queryFn: ({ signal }) => client.admin.registeredOracles(input, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
+export function useAllRegisteredTokens(options?: Options<DataResult<RegisteredAsset[]>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.admin("tokens:all"), queryFn: ({ signal }) => client.admin.registeredTokensAll({ signal }), refetchOnWindowFocus: false, ...options });
+}
+
+export function useAllRegisteredOracles(options?: Options<DataResult<RegisteredAsset[]>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.admin("oracles:all"), queryFn: ({ signal }) => client.admin.registeredOraclesAll({ signal }), refetchOnWindowFocus: false, ...options });
 }
 
 export function useMarketsPaused(options?: Options<DataResult<boolean>>) {
