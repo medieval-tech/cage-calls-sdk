@@ -59,12 +59,21 @@ export interface AccountPortfolio {
   actions: AccountAction[];
 }
 
+export interface AccountFightStatePage {
+  account: Address;
+  items: AccountEventFightState[];
+  actions: AccountAction[];
+  cursor?: bigint;
+  hasMore: boolean;
+}
+
 export interface EventsRepository {
   get(ref: EventRef, options?: RequestOptions): Promise<DataResult<PublicEventSnapshot>>;
 }
 
 export interface AccountsRepository {
   event(ref: EventRef, account: Address, options?: RequestOptions): Promise<DataResult<AccountEventState>>;
+  fightStates(account: Address, input?: { limit?: number; cursor?: bigint }, options?: RequestOptions): Promise<DataResult<AccountFightStatePage>>;
   portfolio(account: Address, options?: RequestOptions): Promise<DataResult<AccountPortfolio>>;
 }
 
@@ -131,22 +140,23 @@ async function enrichPools(
   warnings: DataWarning[],
   options: RequestOptions,
 ): Promise<{ fights: PublicEventFight[]; complete: boolean }> {
-  let complete = true;
-  const enriched = await mapConcurrent(fights, context.budget.maxConcurrency, async (fight) => {
-    try {
-      const pool = await gacha.pool(fight.fightId, options);
-      attempts.push(...pool.meta.attempts);
-      warnings.push(...pool.meta.warnings);
-      complete &&= pool.meta.complete;
-      return { fight, gachaPool: pool.data };
-    } catch (error) {
-      attempts.push(...transportAttemptsFromError(error));
-      warnings.push(warning(`Gacha pool for fight ${fight.fightId}`, error));
-      complete = false;
-      return { fight };
-    }
-  });
-  return { fights: enriched, complete };
+  try {
+    const pools = await gacha.poolStates(fights.map((fight) => fight.fightId), options);
+    attempts.push(...pools.meta.attempts);
+    warnings.push(...pools.meta.warnings);
+    const byFight = new Map(pools.data.map((pool) => [pool.fightId.toString(), pool]));
+    return {
+      fights: fights.map((fight) => {
+        const pool = byFight.get(fight.fightId.toString());
+        return pool ? { fight, gachaPool: pool } : { fight };
+      }),
+      complete: pools.meta.complete && pools.data.length === fights.length,
+    };
+  } catch (error) {
+    attempts.push(...transportAttemptsFromError(error));
+    warnings.push(warning("Gacha pool batch", error));
+    return { fights: fights.map((fight) => ({ fight })), complete: false };
+  }
 }
 
 async function enrichAccountFights(
@@ -267,6 +277,44 @@ export function createAggregateRepositories(
     events: { get: publicEvent },
     accounts: {
       event: eventForAccount,
+      async fightStates(accountInput, input = {}, options = {}) {
+        const account = normalizeAddress(accountInput);
+        const startedAt = context.now();
+        const attempts: SourceAttempt[] = [];
+        const warnings: DataWarning[] = [];
+        let feed: Awaited<ReturnType<FightsRepository["accountFeed"]>>;
+        let accountComplete = true;
+        try {
+          feed = await dependencies.fights.accountFeed(account, input, options);
+        } catch (error) {
+          attempts.push(...transportAttemptsFromError(error));
+          warnings.push({
+            code: "CAPABILITY_FALLBACK",
+            message: "Account fight state used the bounded public feed because the account feed is unavailable.",
+            source: "starknet-rpc",
+          });
+          const publicFeed = await dependencies.fights.feed({ ...input, viewer: account }, options);
+          feed = {
+            ...publicFeed,
+            data: {
+              ...publicFeed.data,
+              items: publicFeed.data.items.filter((fight) => fight.viewer.hasBought || fight.viewer.strikeTickets > 0n),
+            },
+          };
+          accountComplete = false;
+        }
+        attempts.push(...feed.meta.attempts);
+        warnings.push(...feed.meta.warnings);
+        const enriched = await enrichAccountFights(context, dependencies.gacha, feed.data.items, account, attempts, warnings, options);
+        const items = enriched.fights;
+        return aggregateResult(context, startedAt, {
+          account,
+          items,
+          actions: items.flatMap(actionsFor),
+          ...(feed.data.cursor === undefined ? {} : { cursor: feed.data.cursor }),
+          hasMore: feed.data.hasMore,
+        }, attempts, warnings, accountComplete && feed.meta.complete && enriched.complete);
+      },
       async portfolio(accountInput, options = {}) {
         const account = normalizeAddress(accountInput);
         const startedAt = context.now();

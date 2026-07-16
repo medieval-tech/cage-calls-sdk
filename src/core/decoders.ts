@@ -39,6 +39,14 @@ export function decodeGachaPoolStateRpc(values: readonly string[]): GachaPoolSta
   return state;
 }
 
+export function decodeGachaPoolStatesRpc(values: readonly string[]): GachaPoolState[] {
+  const reader = new CairoReader(values, "GachaPoolState[]");
+  const count = reader.number("states.length");
+  const states = Array.from({ length: count }, () => readGachaPoolState(reader));
+  reader.done();
+  return states;
+}
+
 export function decodeGachaUserStatesRpc(values: readonly string[], user: string): GachaUserStates {
   const reader = new CairoReader(values, "GachaUserStates");
   const strikeNonce = reader.bigint("strikeNonce");

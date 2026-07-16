@@ -65,6 +65,7 @@ export type DeploymentClassHashes = Readonly<Record<ContractName, Felt>>;
 
 export type CapabilityName =
   | "fightFeed"
+  | "fightFeedByIds"
   | "fightBuyPagination"
   | "relicFeed"
   | "relicBatch"
@@ -77,6 +78,7 @@ export type CapabilityName =
 
 export interface DeploymentCapabilities {
   fightFeed: boolean;
+  fightFeedByIds: boolean;
   fightBuyPagination: boolean;
   relicFeed: boolean;
   relicBatch: boolean;

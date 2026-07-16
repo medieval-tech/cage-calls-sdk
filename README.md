@@ -53,6 +53,17 @@ const client = createCageCallsClient({
 
 const fights = await client.fightEvents.page({ limit: 20 });
 console.log(fights.data.items, fights.meta);
+
+// When an event service already knows the fight IDs, avoid historical discovery.
+const account = "0x123";
+const event = await client.fightEvents.get("Cage Night", {
+  seasonId: 1n,
+  fightIds: [42n, 43n],
+  viewer: account,
+});
+
+// Load only the first actionable account page; fetch older pages on demand.
+const accountPage = await client.accounts.fightStates(account, { limit: 20 });
 ```
 
 Every read returns a `DataResult<T>`. Its `meta` field reports the selected source, fallback
@@ -71,6 +82,8 @@ The client exposes `fighters`, `fights`, `fightEvents`, `events`, `accounts`, `m
 - External IPFS JSON is fetched only by display-oriented relic reads and only when needed.
 - Exhaustive reads have configurable safety budgets rather than arbitrary result caps.
 - Concurrent identical work is coalesced; the core SDK does not retain completed-result caches.
+- Known fight IDs, Gacha pools, and account-relevant fight state use bounded contract batches.
+- `client.capabilities.diagnostics()` reports preset, override, and runtime-probe provenance.
 
 ## Entry points
 
@@ -83,6 +96,7 @@ The client exposes `fighters`, `fights`, `fightEvents`, `events`, `accounts`, `m
 
 - [Architecture and source fallback](docs/ARCHITECTURE.md)
 - [Mobile integration](docs/MOBILE.md)
+- [Product read performance](docs/PERFORMANCE.md)
 - [Relic reads and statistics](docs/RELICS.md)
 - [React Query integration](docs/REACT.md)
 - [Deployment presets](docs/DEPLOYMENTS.md)

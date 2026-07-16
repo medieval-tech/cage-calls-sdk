@@ -32,7 +32,7 @@ import {
 } from "./transports/resilience.js";
 import { createLiveRepository, type CageCallsLiveTransport, type LiveRepository } from "./repositories/live.js";
 import type { MetadataTransport, RpcTransport, ToriiTransport } from "./transports/index.js";
-import type { CageCallsNetwork, NetworkName, RequestBudget, SdkLogger } from "./core/types.js";
+import type { CageCallsNetwork, DeploymentCapabilities, NetworkName, RequestBudget, SdkLogger } from "./core/types.js";
 
 export interface CageCallsTransports {
   rpc: RpcTransport;
@@ -48,6 +48,8 @@ export interface CreateCageCallsClientOptions {
   budget?: Partial<RequestBudget>;
   now?: () => number;
   resilience?: PassiveCircuitOptions | false;
+  /** Explicit deployment capability overrides, useful during staged contract rollouts. */
+  capabilities?: Partial<DeploymentCapabilities>;
 }
 
 export interface CageCallsClient {
@@ -91,7 +93,7 @@ export function createCageCallsClient(options: CreateCageCallsClientOptions): Ca
   const metadata = options.transports.metadata && resilience
     ? createResilientMetadataTransport(options.transports.metadata, sources, resilience)
     : options.transports.metadata;
-  const capabilities = createCapabilityRegistry(network, rpc);
+  const capabilities = createCapabilityRegistry(network, rpc, options.capabilities);
   const context: RepositoryContext = {
     network,
     rpc,

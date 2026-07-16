@@ -14,6 +14,16 @@ smart-contract commit and manifest hash. After an additive contract migration:
 
 CI runs `pnpm generate:check` and rejects stale generated artifacts.
 
+Capability flags describe what is confirmed live, not merely what exists in the source tree.
+During a staged rollout, pass `capabilities` to `createCageCallsClient` to override a preset for a
+known deployment. `client.capabilities.diagnostics()` reports whether each decision came from a
+preset, custom network, explicit override, or successful runtime probe. Runtime probes use valid
+minimal calldata and are cached for the client lifetime.
+
+`fightFeedByIds` requires the additive FightFactory `get_fight_feed_by_ids` view. Keep it `false`
+until the upgraded class is live on that environment; older deployments continue through the
+bounded per-fight feed fallback.
+
 ## Custom deployments
 
 Pass a complete `CageCallsNetwork` object instead of a preset for Katana or an unreleased world.

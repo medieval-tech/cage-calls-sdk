@@ -105,6 +105,8 @@ export function createTestClient(options: Partial<CreateCageCallsClientOptions> 
     transports: options.transports ?? { rpc },
     ...(options.budget ? { budget: options.budget } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
+    ...(options.capabilities ? { capabilities: options.capabilities } : {}),
+    ...(options.resilience === undefined ? {} : { resilience: options.resilience }),
     now: options.now ?? (() => 1_700_000_000_000),
   });
 }

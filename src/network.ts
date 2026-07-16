@@ -28,6 +28,7 @@ const CONTRACT_NAMES: readonly ContractName[] = [
 
 const CAPABILITY_PROBES: Readonly<Record<CapabilityName, { contract: ContractName; entrypoint: string; calldata: string[] }>> = {
   fightFeed: { contract: "FightFactory", entrypoint: "get_fight_feed", calldata: ["0", "0", "0", "0"] },
+  fightFeedByIds: { contract: "FightFactory", entrypoint: "get_fight_feed_by_ids", calldata: ["0", "0"] },
   fightBuyPagination: { contract: "FightFactory", entrypoint: "get_fight_buys", calldata: ["0", "0", "0", "0"] },
   relicFeed: { contract: "RelicNFT", entrypoint: "get_relic_feed", calldata: ["0", "0", "0"] },
   relicBatch: { contract: "RelicNFT", entrypoint: "get_relics", calldata: ["0"] },
@@ -35,11 +36,11 @@ const CAPABILITY_PROBES: Readonly<Record<CapabilityName, { contract: ContractNam
   fighterBatch: { contract: "FighterRegistry", entrypoint: "get_fighters", calldata: ["0"] },
   gachaPoolAggregate: { contract: "Gacha", entrypoint: "get_pool_states", calldata: ["0"] },
   gachaAvailableTokenIds: { contract: "Gacha", entrypoint: "get_available_token_ids", calldata: ["0", "0", "0", "0", "0"] },
-  accountFightFeed: { contract: "FightFactory", entrypoint: "get_account_fight_feed", calldata: ["0", "0", "0", "0", "0"] },
+  accountFightFeed: { contract: "FightFactory", entrypoint: "get_account_fight_feed", calldata: ["0", "0", "0", "0", "1"] },
   gachaUserStates: { contract: "Gacha", entrypoint: "get_user_states", calldata: ["0", "0"] },
 };
 
-const RUNTIME_PROBE_CAPABILITIES = new Set<CapabilityName>(["accountFightFeed", "gachaUserStates"]);
+const RUNTIME_PROBE_CAPABILITIES = new Set<CapabilityName>(["fightFeedByIds", "accountFightFeed", "gachaUserStates"]);
 
 function validateUrl(value: string, label: string): string {
   try {
@@ -104,15 +105,29 @@ export interface CapabilityRegistry {
   has(capability: CapabilityName): boolean;
   probe(capability: CapabilityName, signal?: AbortSignal): Promise<boolean>;
   snapshot(): Readonly<DeploymentCapabilities>;
+  diagnostics(): Readonly<Record<CapabilityName, CapabilityDiagnostic>>;
 }
 
-export function createCapabilityRegistry(network: CageCallsNetwork, rpc: RpcTransport): CapabilityRegistry {
-  const values: DeploymentCapabilities = { ...network.capabilities };
+export interface CapabilityDiagnostic {
+  supported: boolean;
+  source: "preset" | "custom-network" | "override" | "runtime-probe";
+}
+
+export function createCapabilityRegistry(network: CageCallsNetwork, rpc: RpcTransport, overrides: Partial<DeploymentCapabilities> = {}): CapabilityRegistry {
+  const values: DeploymentCapabilities = { ...network.capabilities, ...overrides };
+  const overridden = new Set(Object.keys(overrides) as CapabilityName[]);
+  const sources = Object.fromEntries(Object.keys(values).map((capability) => [
+    capability,
+    Object.prototype.hasOwnProperty.call(overrides, capability)
+      ? "override"
+      : network.preset ? "preset" : "custom-network",
+  ])) as Record<CapabilityName, CapabilityDiagnostic["source"]>;
   const unsupported = new Set<CapabilityName>();
   const pending = new Map<CapabilityName, Promise<boolean>>();
 
   const probe = async (capability: CapabilityName, signal?: AbortSignal): Promise<boolean> => {
     if (values[capability]) return true;
+    if (overridden.has(capability)) return false;
     if (unsupported.has(capability)) return false;
     // Generated deployment presets are authoritative. Probing a known-false
     // capability only spends RPC budget on an entrypoint that cannot exist.
@@ -129,9 +144,11 @@ export function createCapabilityRegistry(network: CageCallsNetwork, rpc: RpcTran
       calldata: definition.calldata,
     }, signal ? { signal } : {}).then(() => {
       values[capability] = true;
+      sources[capability] = "runtime-probe";
       return true;
     }).catch(() => {
       unsupported.add(capability);
+      sources[capability] = "runtime-probe";
       return false;
     }).finally(() => pending.delete(capability));
     pending.set(capability, task);
@@ -145,6 +162,12 @@ export function createCapabilityRegistry(network: CageCallsNetwork, rpc: RpcTran
     probe,
     snapshot() {
       return Object.freeze({ ...values });
+    },
+    diagnostics() {
+      return Object.freeze(Object.fromEntries(Object.keys(values).map((capability) => {
+        const name = capability as CapabilityName;
+        return [name, Object.freeze({ supported: values[name] && !unsupported.has(name), source: sources[name] })];
+      })) as Record<CapabilityName, CapabilityDiagnostic>);
     },
   };
 }

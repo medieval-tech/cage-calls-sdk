@@ -59,6 +59,21 @@ errors; the SDK does not send background health probes.
 Use `client.sources.snapshot()` or subscribe to `client.sources` for application diagnostics.
 The core SDK deliberately does not cache completed reads or poll in the background.
 
+## Interactive and exhaustive reads
+
+Interactive product journeys use bounded APIs: `fights.feedMany`, `fightEvents.get` with known
+fight IDs, `accounts.fightStates`, `gacha.poolStates`, and `gacha.userStates`. Each contract batch
+contains at most 20 fights and larger explicit inputs are chunked within the caller's request
+budget. These methods never enumerate every historical fight implicitly.
+
+Methods ending in `All`, full portfolio snapshots, collection intelligence, and analytics may
+traverse complete datasets. They are intended for exports, administration, background work, or
+screens that explicitly need exhaustive results—not initial prediction or claim rendering.
+
+Known-ID and viewer-sensitive reads use aggregate RPC views for a consistent authoritative
+snapshot. This is intentional even when Torii is healthy. Torii remains primary for catalog and
+ownership enumeration where it can prove completeness efficiently.
+
 ## Application boundary
 
 The SDK does not own accounts, session policies, calls, signatures, paymasters, receipts, or

@@ -9,6 +9,7 @@ import {
   decodeFighterRpc,
   decodeFightWinnerRpc,
   decodeGachaPoolStateRpc,
+  decodeGachaPoolStatesRpc,
   decodeGachaUserStatesRpc,
   decodeMarketRpc,
   decodeSingleBool,
@@ -40,6 +41,7 @@ import type {
   FightViewerState,
   FightWinner,
   Fighter,
+  GachaFightUserState,
   GachaPoolState,
   GachaUserState,
   GachaUserStates,
@@ -230,6 +232,7 @@ export interface FightsRepository {
   /** @deprecated Use page(). */
   list(input?: { limit?: number; cursor?: string; seasonId?: bigint }, options?: RequestOptions): Promise<DataResult<Page<Fight>>>;
   feed(input?: { limit?: number; cursor?: bigint; viewer?: Address }, options?: RequestOptions): Promise<DataResult<Page<FightFeedItem, bigint>>>;
+  feedMany(fightIds: readonly bigint[], input?: { viewer?: Address }, options?: RequestOptions): Promise<DataResult<FightFeedItem[]>>;
   feedAll(input?: { viewer?: Address }, options?: RequestOptions): Promise<DataResult<FightFeedItem[]>>;
   accountFeed(account: Address, input?: { limit?: number; cursor?: bigint }, options?: RequestOptions): Promise<DataResult<Page<FightFeedItem, bigint>>>;
   accountFeedAll(account: Address, options?: RequestOptions): Promise<DataResult<FightFeedItem[]>>;
@@ -341,6 +344,64 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
     },
     page: list,
     list,
+    async feedMany(fightIds, input = {}, options = {}) {
+      const startedAt = context.now();
+      const budget = resolveRequestBudget(context.budget, options);
+      const unique = Array.from(new Set(fightIds.map((fightId) => {
+        if (fightId <= 0n) throw new ValidationError("fightIds must contain positive identifiers.");
+        return fightId.toString();
+      }))).map(BigInt);
+      if (unique.length === 0) return result(context, startedAt, "derived", [], []);
+      if (unique.length > budget.maxRpcItems) {
+        throw new ValidationError(`fightIds exceeds the ${budget.maxRpcItems} RPC item budget.`);
+      }
+
+      const viewer = normalizeAddress(input.viewer ?? "0x0");
+      const attempts: SourceAttempt[] = [];
+      const warnings: DataWarning[] = [];
+      const rows: FightFeedItem[] = [];
+      const supported = context.capabilities.has("fightFeedByIds")
+        || await context.capabilities.probe("fightFeedByIds", options.signal);
+
+      if (supported) {
+        for (let offset = 0; offset < unique.length; offset += 20) {
+          const ids = unique.slice(offset, offset + 20);
+          const response = await rpcCall(context, "FightFactory", "get_fight_feed_by_ids", [
+            ids.length.toString(),
+            ...ids.flatMap(encodeU256),
+            viewer,
+          ], options);
+          attempts.push(...response.attempts);
+          rows.push(...decodeFightFeedRpc(response.data));
+        }
+      } else {
+        const fallback = await mapConcurrent(unique, budget.maxConcurrency, async (fightId) => {
+          const page = await createFightsRepository(context).feed({ cursor: fightId, limit: 1, ...(input.viewer ? { viewer: input.viewer } : {}) }, options);
+          return { row: page.data.items.find((item) => item.fightId === fightId), meta: page.meta };
+        });
+        attempts.push(...fallback.flatMap((value) => value.meta.attempts));
+        warnings.push(...fallback.flatMap((value) => value.meta.warnings));
+        rows.push(...fallback.flatMap((value) => value.row ? [value.row] : []));
+        warnings.push({
+          code: "CAPABILITY_FALLBACK",
+          message: "Exact fight batches used bounded per-fight feed reads because get_fight_feed_by_ids is unavailable.",
+          source: "starknet-rpc",
+        });
+      }
+
+      const byId = new Map(rows.map((row) => [row.fightId.toString(), row]));
+      const ordered = unique.flatMap((fightId) => {
+        const row = byId.get(fightId.toString());
+        return row ? [row] : [];
+      });
+      const complete = ordered.length === unique.length;
+      if (!complete) warnings.push({
+        code: "PARTIAL_AGGREGATE",
+        message: `Fight batch returned ${ordered.length} of ${unique.length} requested fights.`,
+        source: "starknet-rpc",
+      });
+      return result(context, startedAt, "starknet-rpc", ordered, attempts, complete && supported, warnings);
+    },
     async feedAll(input = {}, options = {}) {
       const startedAt = context.now();
       const budget = resolveRequestBudget(context.budget, options);
@@ -482,11 +543,11 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
       ], options);
       const items = decodeFightFeedRpc(response.data);
       const oldest = items.at(-1)?.fightId ?? 0n;
-      const cursor = oldest > 1n ? oldest : 0n;
+      const cursor = oldest > 1n ? oldest - 1n : 0n;
       return result(context, startedAt, "starknet-rpc", {
         items,
         cursor,
-        hasMore: items.length === size && cursor > 1n,
+        hasMore: items.length === size && cursor > 0n,
       }, response.attempts);
     },
     async accountFeedAll(account, options = {}) {
@@ -868,6 +929,7 @@ export function createTokensRepository(context: RepositoryContext): TokensReposi
 
 export interface GachaRepository {
   pool(fightId: bigint, options?: RequestOptions): Promise<DataResult<GachaPoolState>>;
+  poolStates(fightIds: readonly bigint[], options?: RequestOptions): Promise<DataResult<GachaPoolState[]>>;
   user(fightId: bigint, account: Address, options?: RequestOptions): Promise<DataResult<GachaUserState>>;
   userStates(fightIds: readonly bigint[], account: Address, options?: RequestOptions): Promise<DataResult<GachaUserStates>>;
   availableTokenIds(fightId: bigint, input?: { cursor?: bigint; limit?: number }, options?: RequestOptions): Promise<DataResult<Page<bigint, bigint>>>;
@@ -927,6 +989,49 @@ export function createGachaRepository(context: RepositoryContext, tokens: Tokens
         source: "starknet-rpc",
       }]);
     },
+    async poolStates(fightIds, options = {}) {
+      const startedAt = context.now();
+      const budget = resolveRequestBudget(context.budget, options);
+      const unique = Array.from(new Set(fightIds.map((fightId) => {
+        if (fightId <= 0n) throw new ValidationError("fightIds must contain positive identifiers.");
+        return fightId.toString();
+      }))).map(BigInt);
+      if (unique.length === 0) return result(context, startedAt, "derived", [], []);
+      if (unique.length > budget.maxRpcItems) {
+        throw new ValidationError(`fightIds exceeds the ${budget.maxRpcItems} RPC item budget.`);
+      }
+      const supported = context.capabilities.has("gachaPoolAggregate")
+        || await context.capabilities.probe("gachaPoolAggregate", options.signal);
+      const attempts: SourceAttempt[] = [];
+      const states: GachaPoolState[] = [];
+      if (supported) {
+        for (let offset = 0; offset < unique.length; offset += 20) {
+          const ids = unique.slice(offset, offset + 20);
+          const response = await rpcCall(context, "Gacha", "get_pool_states", [
+            ids.length.toString(),
+            ...ids.flatMap(encodeU256),
+          ], options);
+          attempts.push(...response.attempts);
+          states.push(...decodeGachaPoolStatesRpc(response.data));
+        }
+        const byId = new Map(states.map((state) => [state.fightId.toString(), state]));
+        return result(context, startedAt, "starknet-rpc", unique.flatMap((fightId) => {
+          const state = byId.get(fightId.toString());
+          return state ? [state] : [];
+        }), attempts, states.length === unique.length, states.length === unique.length ? [] : [{
+          code: "PARTIAL_AGGREGATE",
+          message: `Gacha pool batch returned ${states.length} of ${unique.length} requested states.`,
+          source: "starknet-rpc",
+        }]);
+      }
+      const fallback = await mapConcurrent(unique, budget.maxConcurrency, (fightId) =>
+        createGachaRepository(context, tokens).pool(fightId, options));
+      return result(context, startedAt, "starknet-rpc", fallback.map((value) => value.data), fallback.flatMap((value) => value.meta.attempts), false, [{
+        code: "CAPABILITY_FALLBACK",
+        message: "Gacha pool batches used bounded singleton views because get_pool_states is unavailable.",
+        source: "starknet-rpc",
+      }]);
+    },
     async user(fightId, account, options = {}) {
       const startedAt = context.now();
       const [escrow, nonce, tickets] = await Promise.all([
@@ -945,18 +1050,54 @@ export function createGachaRepository(context: RepositoryContext, tokens: Tokens
     },
     async userStates(fightIds, account, options = {}) {
       const startedAt = context.now();
-      const ids = fightIds.slice(0, 20);
+      const budget = resolveRequestBudget(context.budget, options);
+      const ids = Array.from(new Set(fightIds.map((fightId) => {
+        if (fightId <= 0n) throw new ValidationError("fightIds must contain positive identifiers.");
+        return fightId.toString();
+      }))).map(BigInt);
+      if (ids.length > budget.maxRpcItems) {
+        throw new ValidationError(`fightIds exceeds the ${budget.maxRpcItems} RPC item budget.`);
+      }
+      const user = normalizeAddress(account);
+      if (ids.length === 0) return result(context, startedAt, "derived", {
+        user,
+        strikeNonce: 0n,
+        states: [],
+      }, []);
       const supported = context.capabilities.has("gachaUserStates")
         || await context.capabilities.probe("gachaUserStates", options.signal);
       if (supported) {
-        const response = await rpcCall(context, "Gacha", "get_user_states", [
-          ids.length.toString(),
-          ...ids.flatMap(encodeU256),
-          normalizeAddress(account),
-        ], options);
-        return result(context, startedAt, "starknet-rpc", decodeGachaUserStatesRpc(response.data, account), response.attempts);
+        const attempts: SourceAttempt[] = [];
+        const states: GachaFightUserState[] = [];
+        let strikeNonce = 0n;
+        for (let offset = 0; offset < ids.length; offset += 20) {
+          const batch = ids.slice(offset, offset + 20);
+          const response = await rpcCall(context, "Gacha", "get_user_states", [
+            batch.length.toString(),
+            ...batch.flatMap(encodeU256),
+            user,
+          ], options);
+          attempts.push(...response.attempts);
+          const decoded = decodeGachaUserStatesRpc(response.data, user);
+          if (offset === 0) strikeNonce = decoded.strikeNonce;
+          states.push(...decoded.states);
+        }
+        const byId = new Map(states.map((state) => [state.fightId.toString(), state]));
+        const ordered = ids.flatMap((fightId) => {
+          const state = byId.get(fightId.toString());
+          return state ? [state] : [];
+        });
+        return result(context, startedAt, "starknet-rpc", {
+          user,
+          strikeNonce,
+          states: ordered,
+        }, attempts, ordered.length === ids.length, ordered.length === ids.length ? [] : [{
+          code: "PARTIAL_AGGREGATE",
+          message: `Gacha account-state batches returned ${ordered.length} of ${ids.length} requested states.`,
+          source: "starknet-rpc",
+        }]);
       }
-      const states = await mapConcurrent(ids, context.budget.maxConcurrency, async (fightId) => {
+      const states = await mapConcurrent(ids, budget.maxConcurrency, async (fightId) => {
         const [userState, poolState] = await Promise.all([
           createGachaRepository(context, tokens).user(fightId, account, options),
           createGachaRepository(context, tokens).pool(fightId, options),
@@ -965,7 +1106,7 @@ export function createGachaRepository(context: RepositoryContext, tokens: Tokens
       });
       const strikeNonce = states[0]?.data.strikeNonce ?? 0n;
       return result(context, startedAt, "starknet-rpc", {
-        user: normalizeAddress(account),
+        user,
         strikeNonce,
         states: states.map((value) => value.data),
       }, states.flatMap((value) => value.attempts), false, [{
@@ -1034,7 +1175,7 @@ export function createGachaRepository(context: RepositoryContext, tokens: Tokens
 }
 
 export interface FightEventsRepository {
-  get(eventName: string, input?: { seasonId?: bigint; viewer?: Address; expectedFightCount?: number; cursor?: bigint; limit?: number; now?: bigint }, options?: RequestOptions): Promise<DataResult<FightEvent | undefined>>;
+  get(eventName: string, input?: { seasonId?: bigint; fightIds?: readonly bigint[]; viewer?: Address; expectedFightCount?: number; cursor?: bigint; limit?: number; now?: bigint }, options?: RequestOptions): Promise<DataResult<FightEvent | undefined>>;
   all(input?: { viewer?: Address; now?: bigint }, options?: RequestOptions): Promise<DataResult<FightEvent[]>>;
   page(input?: { limit?: number; cursor?: bigint; viewer?: Address; now?: bigint }, options?: RequestOptions): Promise<DataResult<Page<FightEvent, bigint>>>;
   /** @deprecated Use page(). */
@@ -1076,6 +1217,29 @@ export function createFightEventsRepository(context: RepositoryContext, fights: 
       const attempts: SourceAttempt[] = [];
       const warnings: DataWarning[] = [];
       const matches: FightFeedItem[] = [];
+      if (input.fightIds) {
+        const response = await fights.feedMany(input.fightIds, input.viewer ? { viewer: input.viewer } : {}, options);
+        attempts.push(...response.meta.attempts);
+        warnings.push(...response.meta.warnings);
+        matches.push(...response.data.filter((fight) =>
+          fight.eventName === eventName && (input.seasonId === undefined || fight.seasonId === input.seasonId)));
+        const expected = input.expectedFightCount ?? input.fightIds.length;
+        const complete = response.meta.complete && matches.length >= expected;
+        if (!complete) warnings.push({
+          code: "PARTIAL_AGGREGATE",
+          message: `Event lookup matched ${matches.length} of ${expected} expected fights.`,
+          source: "derived",
+        });
+        return result(
+          context,
+          startedAt,
+          "derived",
+          group(matches, input.now ?? BigInt(Math.floor(context.now() / 1_000)))[0],
+          attempts,
+          complete,
+          warnings,
+        );
+      }
       let cursor = input.cursor ?? 0n;
       let exhausted = false;
       const expected = input.expectedFightCount;

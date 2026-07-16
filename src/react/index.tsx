@@ -2,7 +2,7 @@ import { createContext, createElement, useContext, useEffect, useRef, type React
 import { useQuery, useQueryClient, type UseQueryOptions } from "@tanstack/react-query";
 
 import type { CageCallsClient } from "../client.js";
-import type { AccountEventState, AccountPortfolio, EventRef, PublicEventSnapshot } from "../repositories/aggregates.js";
+import type { AccountEventState, AccountFightStatePage, AccountPortfolio, EventRef, PublicEventSnapshot } from "../repositories/aggregates.js";
 import type { AnalyticsSummaryFilter, CageCallsAnalyticsSummary } from "../repositories/analytics-summary.js";
 import { normalizeAddress } from "../core/codecs.js";
 import { cageCallsQueryKeys as keys } from "../query-keys.js";
@@ -26,6 +26,7 @@ import type {
   Fighter,
   GachaPoolState,
   GachaUserState,
+  GachaUserStates,
   Market,
   MarketPosition,
   MarketState,
@@ -53,6 +54,7 @@ type FightersInput = { active?: boolean; limit?: number; cursor?: string };
 type FightsInput = { limit?: number; cursor?: string; seasonId?: bigint };
 type FightFeedInput = { limit?: number; cursor?: bigint; viewer?: Address };
 type FightEventsInput = FightFeedInput & { now?: bigint };
+type FightEventInput = { seasonId?: bigint; fightIds?: readonly bigint[]; viewer?: Address; expectedFightCount?: number; cursor?: bigint; limit?: number; now?: bigint };
 type OffsetPageInput = { offset?: number; limit?: number };
 type CursorPageInput = { limit?: number; cursor?: string };
 type GachaTokensInput = { cursor?: bigint; limit?: number };
@@ -93,9 +95,19 @@ export function useFightFeed(input: FightFeedInput = {}, options?: Options<DataR
   return useQuery({ queryKey: keys.fightFeed(input), queryFn: ({ signal }) => client.fights.feed(input, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
+export function useFightFeedMany(fightIds: readonly bigint[], input: { viewer?: Address } = {}, options?: Options<DataResult<FightFeedItem[]>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.fightFeedMany(fightIds, input.viewer), queryFn: ({ signal }) => client.fights.feedMany(fightIds, input, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
 export function useFightEvents(input: FightEventsInput = {}, options?: Options<DataResult<Page<FightEvent, bigint>>>) {
   const client = useCageCallsClient();
   return useQuery({ queryKey: keys.fightEvents(input), queryFn: ({ signal }) => client.fightEvents.page(input, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
+export function useFightEvent(eventName: string, input: FightEventInput = {}, options?: Options<DataResult<FightEvent | undefined>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.fightEvent(eventName, input), queryFn: ({ signal }) => client.fightEvents.get(eventName, input, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
 const keepComplete = <T,>(previous: DataResult<T> | undefined) => previous?.meta.complete ? previous : undefined;
@@ -113,6 +125,11 @@ export function useAccountEvent(ref: EventRef, account: Address, options?: Optio
 export function useAccountPortfolio(account: Address, options?: Options<DataResult<AccountPortfolio>>) {
   const client = useCageCallsClient();
   return useQuery({ queryKey: keys.accountPortfolio(account), queryFn: ({ signal }) => client.accounts.portfolio(account, { signal }), placeholderData: keepComplete, refetchOnWindowFocus: false, ...options });
+}
+
+export function useAccountFightStates(account: Address, input: { limit?: number; cursor?: bigint } = {}, options?: Options<DataResult<AccountFightStatePage>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.accountFightStates(account, input), queryFn: ({ signal }) => client.accounts.fightStates(account, input, { signal }), placeholderData: keepComplete, refetchOnWindowFocus: false, ...options });
 }
 
 export function useFightBuys(fightId: bigint, input: OffsetPageInput = {}, options?: Options<DataResult<Page<FightBuy, number>>>) {
@@ -220,9 +237,19 @@ export function useGachaPool(fightId: bigint, options?: Options<DataResult<Gacha
   return useQuery({ queryKey: keys.gacha(fightId), queryFn: ({ signal }) => client.gacha.pool(fightId, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
+export function useGachaPoolStates(fightIds: readonly bigint[], options?: Options<DataResult<GachaPoolState[]>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.gachaPools(fightIds), queryFn: ({ signal }) => client.gacha.poolStates(fightIds, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
 export function useGachaUser(fightId: bigint, account: Address, options?: Options<DataResult<GachaUserState>>) {
   const client = useCageCallsClient();
   return useQuery({ queryKey: keys.gachaUser(fightId, account), queryFn: ({ signal }) => client.gacha.user(fightId, account, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
+export function useGachaUserStates(fightIds: readonly bigint[], account: Address, options?: Options<DataResult<GachaUserStates>>) {
+  const client = useCageCallsClient();
+  return useQuery({ queryKey: keys.gachaUsers(fightIds, account), queryFn: ({ signal }) => client.gacha.userStates(fightIds, account, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
 export function useGachaAvailableTokenIds(fightId: bigint, input: GachaTokensInput = {}, options?: Options<DataResult<Page<bigint, bigint>>>) {

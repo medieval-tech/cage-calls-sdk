@@ -41,6 +41,20 @@ export interface AccountEventState {
 }
 
 // @public (undocumented)
+export interface AccountFightStatePage {
+    // (undocumented)
+    account: Address;
+    // (undocumented)
+    actions: AccountAction[];
+    // (undocumented)
+    cursor?: bigint;
+    // (undocumented)
+    hasMore: boolean;
+    // (undocumented)
+    items: AccountEventFightState[];
+}
+
+// @public (undocumented)
 export interface AccountPortfolio {
     // (undocumented)
     account: Address;
@@ -60,6 +74,11 @@ export interface AccountPortfolio {
 export interface AccountsRepository {
     // (undocumented)
     event(ref: EventRef, account: Address, options?: RequestOptions): Promise<DataResult<AccountEventState>>;
+    // (undocumented)
+    fightStates(account: Address, input?: {
+        limit?: number;
+        cursor?: bigint;
+    }, options?: RequestOptions): Promise<DataResult<AccountFightStatePage>>;
     // (undocumented)
     portfolio(account: Address, options?: RequestOptions): Promise<DataResult<AccountPortfolio>>;
 }
@@ -458,6 +477,7 @@ export const cageCallsQueryKeys: Readonly<{
         cursor?: bigint;
         viewer?: Address;
     }) => readonly ["cage-calls", string, ...unknown[]];
+    fightFeedMany: (fightIds: readonly bigint[], viewer?: Address) => readonly ["cage-calls", string, ...unknown[]];
     fightBuys: (fightId: bigint, input?: {
         offset?: number;
         limit?: number;
@@ -468,9 +488,22 @@ export const cageCallsQueryKeys: Readonly<{
         viewer?: Address;
         now?: bigint;
     }) => readonly ["cage-calls", string, ...unknown[]];
+    fightEvent: (eventName: string, input?: {
+        seasonId?: bigint;
+        fightIds?: readonly bigint[];
+        viewer?: Address;
+        expectedFightCount?: number;
+        cursor?: bigint;
+        limit?: number;
+        now?: bigint;
+    }) => readonly ["cage-calls", string, ...unknown[]];
     event: (ref: EventRef) => readonly ["cage-calls", string, ...unknown[]];
     accountEvent: (account: Address, ref: EventRef) => readonly ["cage-calls", string, ...unknown[]];
     accountPortfolio: (account: Address) => readonly ["cage-calls", string, ...unknown[]];
+    accountFightStates: (account: Address, input?: {
+        limit?: number;
+        cursor?: bigint;
+    }) => readonly ["cage-calls", string, ...unknown[]];
     portfolio: (account: Address, input?: {
         limit?: number;
         cursor?: string;
@@ -489,7 +522,9 @@ export const cageCallsQueryKeys: Readonly<{
     ownedRelics: (account: Address) => readonly ["cage-calls", string, ...unknown[]];
     ownedRelicInventory: (account: Address) => readonly ["cage-calls", string, ...unknown[]];
     gacha: (fightId: bigint) => readonly ["cage-calls", string, ...unknown[]];
+    gachaPools: (fightIds: readonly bigint[]) => readonly ["cage-calls", string, ...unknown[]];
     gachaUser: (fightId: bigint, account: Address) => readonly ["cage-calls", string, ...unknown[]];
+    gachaUsers: (fightIds: readonly bigint[], account: Address) => readonly ["cage-calls", string, ...unknown[]];
     gachaTokens: (fightId: bigint, input?: {
         cursor?: bigint;
         limit?: number;
@@ -554,10 +589,20 @@ export class CairoReader {
 }
 
 // @public (undocumented)
-export type CapabilityName = "fightFeed" | "fightBuyPagination" | "relicFeed" | "relicBatch" | "relicOwnerPage" | "fighterBatch" | "gachaPoolAggregate" | "gachaAvailableTokenIds" | "accountFightFeed" | "gachaUserStates";
+export interface CapabilityDiagnostic {
+    // (undocumented)
+    source: "preset" | "custom-network" | "override" | "runtime-probe";
+    // (undocumented)
+    supported: boolean;
+}
+
+// @public (undocumented)
+export type CapabilityName = "fightFeed" | "fightFeedByIds" | "fightBuyPagination" | "relicFeed" | "relicBatch" | "relicOwnerPage" | "fighterBatch" | "gachaPoolAggregate" | "gachaAvailableTokenIds" | "accountFightFeed" | "gachaUserStates";
 
 // @public (undocumented)
 export interface CapabilityRegistry {
+    // (undocumented)
+    diagnostics(): Readonly<Record<CapabilityName, CapabilityDiagnostic>>;
     // (undocumented)
     has(capability: CapabilityName): boolean;
     // (undocumented)
@@ -607,6 +652,7 @@ export function createCageCallsClient(options: CreateCageCallsClientOptions): Ca
 export interface CreateCageCallsClientOptions {
     // (undocumented)
     budget?: Partial<RequestBudget>;
+    capabilities?: Partial<DeploymentCapabilities>;
     // (undocumented)
     logger?: SdkLogger;
     // (undocumented)
@@ -620,7 +666,7 @@ export interface CreateCageCallsClientOptions {
 }
 
 // @public (undocumented)
-export function createCapabilityRegistry(network: CageCallsNetwork, rpc: RpcTransport): CapabilityRegistry;
+export function createCapabilityRegistry(network: CageCallsNetwork, rpc: RpcTransport, overrides?: Partial<DeploymentCapabilities>): CapabilityRegistry;
 
 // @public (undocumented)
 export function createDataResult<T>(args: {
@@ -728,9 +774,9 @@ export const CURATED_ENTRYPOINTS: Readonly<{
     readonly CALLS: readonly ["balance_of", "allowance", "approve", "transfer", "transfer_from", "mint", "burn", "has_role", "grant_role", "revoke_role"];
     readonly CageCallsOracle: readonly ["set_winner", "set_winner_index", "get_winner", "is_admin", "grant_admin", "revoke_admin"];
     readonly ConditionalTokens: readonly ["balance_of", "is_approved_for_all", "get_payout_numerator", "get_payout_denominator", "split_position", "merge_position", "redeem_positions"];
-    readonly FightFactory: readonly ["fight", "get_fight_feed", "get_fight_buys", "get_fight_buy", "get_fight_winner", "next_fight_id", "has_bought", "has_redeemed", "user_choice", "preview_strike_tickets", "fight_winner_index", "winners_count", "fight_pot_total", "fight_pot_claimed", "create_fight", "buy_fight", "close_fight", "settle_fight", "redeem", "set_collateral_token", "is_admin", "grant_admin", "revoke_admin"];
+    readonly FightFactory: readonly ["fight", "get_fight_feed", "get_fight_feed_by_ids", "get_fight_buys", "get_fight_buy", "get_fight_winner", "get_account_fight_ids", "get_account_fight_feed", "next_fight_id", "has_bought", "has_redeemed", "user_choice", "preview_strike_tickets", "fight_winner_index", "winners_count", "fight_pot_total", "fight_pot_claimed", "create_fight", "buy_fight", "close_fight", "settle_fight", "redeem", "set_collateral_token", "is_admin", "grant_admin", "revoke_admin"];
     readonly FighterRegistry: readonly ["get_fighter", "get_fighters", "fighter_exists", "fighter_is_active", "register_fighter", "update_fighter", "activate_fighter", "deactivate_fighter", "is_admin", "grant_admin", "revoke_admin"];
-    readonly Gacha: readonly ["pool_open", "pool_size", "get_pool_state", "get_pool_states", "get_available_token_ids", "pool_registered_count", "pool_available_count", "expected_count", "escrowed_token", "get_strike_nonce", "vrf_address", "strike", "keep", "set_pool_open", "register_relic", "unregister_relic", "reset_pool", "set_vrf_address", "is_admin", "grant_admin", "revoke_admin"];
+    readonly Gacha: readonly ["pool_open", "pool_size", "get_pool_state", "get_pool_states", "get_user_states", "get_available_token_ids", "pool_registered_count", "pool_available_count", "expected_count", "escrowed_token", "get_strike_nonce", "vrf_address", "strike", "keep", "set_pool_open", "register_relic", "unregister_relic", "reset_pool", "set_vrf_address", "is_admin", "grant_admin", "revoke_admin"];
     readonly Markets: readonly ["get_market", "get_market_position", "get_vault_numerator", "get_vault_denominator", "buy", "close_market", "resolve", "redeem", "register_token", "register_oracle", "pause", "unpause", "is_paused", "has_role", "grant_role", "revoke_role"];
     readonly RelicNFT: readonly ["owner_of", "balance_of", "relic_data", "relic_metadata", "relic_event_name", "get_token_uri", "get_relic_feed", "get_relics", "get_owned_relics", "next_token_id", "mint_relic", "update_relic_metadata", "update_token_uri", "grant_minter", "revoke_minter", "grant_curator", "revoke_curator"];
     readonly StrikeTickets: readonly ["balance_of", "is_approved_for_all", "set_approval_for_all"];
@@ -803,6 +849,9 @@ export function decodeFightWinnerRpc(values: readonly string[]): FightWinner;
 export function decodeGachaPoolStateRpc(values: readonly string[]): GachaPoolState;
 
 // @public (undocumented)
+export function decodeGachaPoolStatesRpc(values: readonly string[]): GachaPoolState[];
+
+// @public (undocumented)
 export function decodeGachaUserStatesRpc(values: readonly string[], user: string): GachaUserStates;
 
 // @public (undocumented)
@@ -855,6 +904,8 @@ export interface DeploymentCapabilities {
     fighterBatch: boolean;
     // (undocumented)
     fightFeed: boolean;
+    // (undocumented)
+    fightFeedByIds: boolean;
     // (undocumented)
     gachaAvailableTokenIds: boolean;
     // (undocumented)
@@ -1018,6 +1069,7 @@ export interface FightEventsRepository {
     // (undocumented)
     get(eventName: string, input?: {
         seasonId?: bigint;
+        fightIds?: readonly bigint[];
         viewer?: Address;
         expectedFightCount?: number;
         cursor?: bigint;
@@ -1122,6 +1174,10 @@ export interface FightsRepository {
     }, options?: RequestOptions): Promise<DataResult<Page<FightFeedItem, bigint>>>;
     // (undocumented)
     feedAll(input?: {
+        viewer?: Address;
+    }, options?: RequestOptions): Promise<DataResult<FightFeedItem[]>>;
+    // (undocumented)
+    feedMany(fightIds: readonly bigint[], input?: {
         viewer?: Address;
     }, options?: RequestOptions): Promise<DataResult<FightFeedItem[]>>;
     // (undocumented)
@@ -1232,6 +1288,8 @@ export interface GachaRepository {
     // (undocumented)
     pool(fightId: bigint, options?: RequestOptions): Promise<DataResult<GachaPoolState>>;
     // (undocumented)
+    poolStates(fightIds: readonly bigint[], options?: RequestOptions): Promise<DataResult<GachaPoolState[]>>;
+    // (undocumented)
     user(fightId: bigint, account: Address, options?: RequestOptions): Promise<DataResult<GachaUserState>>;
     // (undocumented)
     userStates(fightIds: readonly bigint[], account: Address, options?: RequestOptions): Promise<DataResult<GachaUserStates>>;
@@ -1329,6 +1387,7 @@ export const MAINNET_PRESET: {
     vrfAddress: "0x051fea4450da9d6aee758bdeba88b2f665bcbf549d2c61421aa724e9ac0ced8f";
     capabilities: {
         fightFeed: false;
+        fightFeedByIds: false;
         fightBuyPagination: false;
         relicFeed: false;
         relicBatch: false;
@@ -1509,6 +1568,7 @@ export const NETWORK_PRESETS: Readonly<{
         vrfAddress: "0x051fea4450da9d6aee758bdeba88b2f665bcbf549d2c61421aa724e9ac0ced8f";
         capabilities: {
             fightFeed: false;
+            fightFeedByIds: false;
             fightBuyPagination: false;
             relicFeed: false;
             relicBatch: false;
@@ -1544,9 +1604,9 @@ export const NETWORK_PRESETS: Readonly<{
             CALLS: "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300";
             CageCallsOracle: "0x16ca3bd248cc4eb5cd9869c876871091831da293b2e760bf73739e426b39b23";
             ConditionalTokens: "0x6435347fd999d80f72fde6e95ca6c8c832ef65bb46630a9fc76ed7fc98e974b";
-            FightFactory: "0xe3d6d522657e99a197c426d8dd6814d8cc8ac3ffca9cb58f4ea368149e8ac";
+            FightFactory: "0x73bc30b7067715a59d40bfccebc2485bf0445c7a70e3222ab6a4faf0d06e603";
             FighterRegistry: "0x366b6ae2c4709582b47b8d7d21c7ec66eeae252fd03fad3b9e4598be6c60694";
-            Gacha: "0x339c038535f51d5a5196714eb02fdcb666cfef66d9dce9c0704c35989735696";
+            Gacha: "0x74b81062f5cfaa8c1694ef9bcf1e5084864216de92e88bf05261489bf25cdba";
             Markets: "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12";
             RelicNFT: "0x7fe51e65a2dd5524462717f2d95435130e8a9874492ea74d8add9f20b6b7696";
             StrikeTickets: "0x6f5d99084de5e581da00408c0d44b9267a695184c346f69780d4ee2d8e9ebde";
@@ -1558,6 +1618,7 @@ export const NETWORK_PRESETS: Readonly<{
         vrfAddress: "0x051fea4450da9d6aee758bdeba88b2f665bcbf549d2c61421aa724e9ac0ced8f";
         capabilities: {
             fightFeed: true;
+            fightFeedByIds: true;
             fightBuyPagination: true;
             relicFeed: true;
             relicBatch: true;
@@ -1565,8 +1626,8 @@ export const NETWORK_PRESETS: Readonly<{
             fighterBatch: true;
             gachaPoolAggregate: true;
             gachaAvailableTokenIds: true;
-            accountFightFeed: false;
-            gachaUserStates: false;
+            accountFightFeed: true;
+            gachaUserStates: true;
         };
     };
     "sepolia-staging": {
@@ -1593,9 +1654,9 @@ export const NETWORK_PRESETS: Readonly<{
             CALLS: "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300";
             CageCallsOracle: "0x16ca3bd248cc4eb5cd9869c876871091831da293b2e760bf73739e426b39b23";
             ConditionalTokens: "0x6435347fd999d80f72fde6e95ca6c8c832ef65bb46630a9fc76ed7fc98e974b";
-            FightFactory: "0xe3d6d522657e99a197c426d8dd6814d8cc8ac3ffca9cb58f4ea368149e8ac";
+            FightFactory: "0x73bc30b7067715a59d40bfccebc2485bf0445c7a70e3222ab6a4faf0d06e603";
             FighterRegistry: "0x366b6ae2c4709582b47b8d7d21c7ec66eeae252fd03fad3b9e4598be6c60694";
-            Gacha: "0x339c038535f51d5a5196714eb02fdcb666cfef66d9dce9c0704c35989735696";
+            Gacha: "0x74b81062f5cfaa8c1694ef9bcf1e5084864216de92e88bf05261489bf25cdba";
             Markets: "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12";
             RelicNFT: "0x7fe51e65a2dd5524462717f2d95435130e8a9874492ea74d8add9f20b6b7696";
             StrikeTickets: "0x6f5d99084de5e581da00408c0d44b9267a695184c346f69780d4ee2d8e9ebde";
@@ -1607,6 +1668,7 @@ export const NETWORK_PRESETS: Readonly<{
         vrfAddress: "0x051fea4450da9d6aee758bdeba88b2f665bcbf549d2c61421aa724e9ac0ced8f";
         capabilities: {
             fightFeed: true;
+            fightFeedByIds: true;
             fightBuyPagination: true;
             relicFeed: true;
             relicBatch: true;
@@ -1614,8 +1676,8 @@ export const NETWORK_PRESETS: Readonly<{
             fighterBatch: true;
             gachaPoolAggregate: true;
             gachaAvailableTokenIds: true;
-            accountFightFeed: false;
-            gachaUserStates: false;
+            accountFightFeed: true;
+            gachaUserStates: true;
         };
     };
 }>;
@@ -2189,9 +2251,9 @@ export const SEPOLIA_DEV_PRESET: {
         CALLS: "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300";
         CageCallsOracle: "0x16ca3bd248cc4eb5cd9869c876871091831da293b2e760bf73739e426b39b23";
         ConditionalTokens: "0x6435347fd999d80f72fde6e95ca6c8c832ef65bb46630a9fc76ed7fc98e974b";
-        FightFactory: "0xe3d6d522657e99a197c426d8dd6814d8cc8ac3ffca9cb58f4ea368149e8ac";
+        FightFactory: "0x73bc30b7067715a59d40bfccebc2485bf0445c7a70e3222ab6a4faf0d06e603";
         FighterRegistry: "0x366b6ae2c4709582b47b8d7d21c7ec66eeae252fd03fad3b9e4598be6c60694";
-        Gacha: "0x339c038535f51d5a5196714eb02fdcb666cfef66d9dce9c0704c35989735696";
+        Gacha: "0x74b81062f5cfaa8c1694ef9bcf1e5084864216de92e88bf05261489bf25cdba";
         Markets: "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12";
         RelicNFT: "0x7fe51e65a2dd5524462717f2d95435130e8a9874492ea74d8add9f20b6b7696";
         StrikeTickets: "0x6f5d99084de5e581da00408c0d44b9267a695184c346f69780d4ee2d8e9ebde";
@@ -2203,6 +2265,7 @@ export const SEPOLIA_DEV_PRESET: {
     vrfAddress: "0x051fea4450da9d6aee758bdeba88b2f665bcbf549d2c61421aa724e9ac0ced8f";
     capabilities: {
         fightFeed: true;
+        fightFeedByIds: true;
         fightBuyPagination: true;
         relicFeed: true;
         relicBatch: true;
@@ -2210,8 +2273,8 @@ export const SEPOLIA_DEV_PRESET: {
         fighterBatch: true;
         gachaPoolAggregate: true;
         gachaAvailableTokenIds: true;
-        accountFightFeed: false;
-        gachaUserStates: false;
+        accountFightFeed: true;
+        gachaUserStates: true;
     };
 };
 
@@ -2240,9 +2303,9 @@ export const SEPOLIA_STAGING_PRESET: {
         CALLS: "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300";
         CageCallsOracle: "0x16ca3bd248cc4eb5cd9869c876871091831da293b2e760bf73739e426b39b23";
         ConditionalTokens: "0x6435347fd999d80f72fde6e95ca6c8c832ef65bb46630a9fc76ed7fc98e974b";
-        FightFactory: "0xe3d6d522657e99a197c426d8dd6814d8cc8ac3ffca9cb58f4ea368149e8ac";
+        FightFactory: "0x73bc30b7067715a59d40bfccebc2485bf0445c7a70e3222ab6a4faf0d06e603";
         FighterRegistry: "0x366b6ae2c4709582b47b8d7d21c7ec66eeae252fd03fad3b9e4598be6c60694";
-        Gacha: "0x339c038535f51d5a5196714eb02fdcb666cfef66d9dce9c0704c35989735696";
+        Gacha: "0x74b81062f5cfaa8c1694ef9bcf1e5084864216de92e88bf05261489bf25cdba";
         Markets: "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12";
         RelicNFT: "0x7fe51e65a2dd5524462717f2d95435130e8a9874492ea74d8add9f20b6b7696";
         StrikeTickets: "0x6f5d99084de5e581da00408c0d44b9267a695184c346f69780d4ee2d8e9ebde";
@@ -2254,6 +2317,7 @@ export const SEPOLIA_STAGING_PRESET: {
     vrfAddress: "0x051fea4450da9d6aee758bdeba88b2f665bcbf549d2c61421aa724e9ac0ced8f";
     capabilities: {
         fightFeed: true;
+        fightFeedByIds: true;
         fightBuyPagination: true;
         relicFeed: true;
         relicBatch: true;
@@ -2261,8 +2325,8 @@ export const SEPOLIA_STAGING_PRESET: {
         fighterBatch: true;
         gachaPoolAggregate: true;
         gachaAvailableTokenIds: true;
-        accountFightFeed: false;
-        gachaUserStates: false;
+        accountFightFeed: true;
+        gachaUserStates: true;
     };
 };
 
@@ -2511,12 +2575,12 @@ export const UPSTREAM_DEPLOYMENTS: {
             readonly sha256: "5a01f7129458756af4dde9981e87ac7d40ef6291441e293d246ce43450e05079";
         };
         readonly "sepolia-dev": {
-            readonly commit: "d7ad4bbeeb70af345a4e50818162040c6acfedee";
-            readonly sha256: "da0d4a4d5e4421391467935a5cb5d24cd456c34d1f8c336e9c64c8ec9fe71daf";
+            readonly commit: "ce5e450fcafc552bd7faacc74a83f9ae611c381a";
+            readonly sha256: "c2f0df0d2567307d3fd5ce1b9c4c4ed8b9e471c232f3d8c16e228cfd78f378ab";
         };
         readonly "sepolia-staging": {
-            readonly commit: "d7ad4bbeeb70af345a4e50818162040c6acfedee";
-            readonly sha256: "b2131eea1b3fce6d80f8f1fe0596e727bc9ab7040cd7aadd96578910fdae5eac";
+            readonly commit: "ce5e450fcafc552bd7faacc74a83f9ae611c381a";
+            readonly sha256: "c94b569c20435dd5fd0edeb35c80b15dc3db29ac09d5822baed20c3b53561a0e";
         };
     };
 };
