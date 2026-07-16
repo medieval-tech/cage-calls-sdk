@@ -71,7 +71,9 @@ export type CapabilityName =
   | "relicOwnerPage"
   | "fighterBatch"
   | "gachaPoolAggregate"
-  | "gachaAvailableTokenIds";
+  | "gachaAvailableTokenIds"
+  | "accountFightFeed"
+  | "gachaUserStates";
 
 export interface DeploymentCapabilities {
   fightFeed: boolean;
@@ -82,6 +84,8 @@ export interface DeploymentCapabilities {
   fighterBatch: boolean;
   gachaPoolAggregate: boolean;
   gachaAvailableTokenIds: boolean;
+  accountFightFeed: boolean;
+  gachaUserStates: boolean;
 }
 
 export interface CageCallsNetwork {
@@ -108,6 +112,8 @@ export interface TraversalLimits {
 
 export interface RequestOptions {
   signal?: AbortSignal;
+  /** Per-request deadline. It can only tighten the transport's configured timeout. */
+  timeoutMs?: number;
   traversal?: Partial<TraversalLimits>;
   /** Preferred size for aggregate `get_relics` calls. The SDK splits failed batches adaptively. */
   relicBatchSize?: number;
@@ -344,6 +350,16 @@ export interface GachaUserState {
   escrowedTokenId?: bigint;
   strikeNonce: bigint;
   ticketBalance: bigint;
+}
+
+export interface GachaFightUserState extends GachaUserState {
+  pool: GachaPoolState;
+}
+
+export interface GachaUserStates {
+  user: Address;
+  strikeNonce: bigint;
+  states: GachaFightUserState[];
 }
 
 export interface RawCageCallsEvent {

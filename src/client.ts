@@ -28,6 +28,7 @@ import {
   createSourceStatusRegistry,
   type PassiveCircuitOptions,
   type SourceStatusRegistry,
+  type SourceStatus,
 } from "./resilience.js";
 import { createLiveRepository, type CageCallsLiveTransport, type LiveRepository } from "./live.js";
 import type { MetadataTransport, RpcTransport, ToriiTransport } from "./transports.js";
@@ -65,7 +66,14 @@ export interface CageCallsClient {
   readonly activity: ActivityRepository;
   readonly admin: AdminRepository;
   readonly sources: SourceStatusRegistry;
+  readonly health: CageCallsHealth;
   readonly live: LiveRepository;
+}
+
+export interface CageCallsHealth {
+  snapshot(): ReturnType<SourceStatusRegistry["snapshot"]>;
+  subscribe(listener: (snapshot: ReturnType<SourceStatusRegistry["snapshot"]>, changed: Readonly<SourceStatus>) => void): () => void;
+  checkNow(): Promise<ReturnType<SourceStatusRegistry["snapshot"]>>;
 }
 
 export function createCageCallsClient(options: CreateCageCallsClientOptions): CageCallsClient {
@@ -101,6 +109,18 @@ export function createCageCallsClient(options: CreateCageCallsClientOptions): Ca
     ...(metadata ? { metadata } : {}),
   });
   const aggregates = createAggregateRepositories(context, { fights, gacha, relics, tokens });
+  const health: CageCallsHealth = {
+    snapshot: () => sources.snapshot(),
+    subscribe(listener) {
+      return sources.subscribe((changed) => listener(sources.snapshot(), changed));
+    },
+    async checkNow() {
+      const checks: Promise<unknown>[] = [rpc.request("starknet_blockNumber", [], { timeoutMs: 5_000 })];
+      if (torii) checks.push(torii.query("query CageCallsHealth { __typename }", {}, { timeoutMs: 5_000 }));
+      await Promise.allSettled(checks);
+      return sources.snapshot();
+    },
+  };
   return Object.freeze({
     network,
     capabilities,
@@ -117,6 +137,7 @@ export function createCageCallsClient(options: CreateCageCallsClientOptions): Ca
     activity: createActivityRepository(context),
     admin: createAdminRepository(context),
     sources,
+    health,
     live: createLiveRepository(options.transports.live),
   });
 }

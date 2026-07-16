@@ -75,6 +75,34 @@ describe("RPC transports", () => {
     expect(JSON.stringify(logger.debug.mock.calls)).not.toContain("0x2");
   });
 
+  it("keeps an overloaded primary on cooldown across subsequent requests", async () => {
+    let now = 1_000;
+    const primaryCalls: string[] = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
+      const url = String(input);
+      if (url.includes("primary")) {
+        primaryCalls.push(url);
+        return json({ jsonrpc: "2.0", id: 1, error: { code: 429, message: "capacity" } });
+      }
+      return json({ jsonrpc: "2.0", id: 1, result: 42 });
+    });
+    const rpc = createFallbackRpcTransport({
+      primaryUrl: "https://primary.example",
+      fallbackUrl: "https://fallback.example",
+      fetch,
+      maxRetries: 0,
+      cooldownMs: 30_000,
+      now: () => now,
+    });
+
+    await expect(rpc.request("starknet_blockNumber")).resolves.toMatchObject({ data: 42 });
+    await expect(rpc.request("starknet_blockNumber")).resolves.toMatchObject({ data: 42 });
+    expect(primaryCalls).toHaveLength(1);
+    now = 31_000;
+    await expect(rpc.request("starknet_blockNumber")).resolves.toMatchObject({ data: 42 });
+    expect(primaryCalls).toHaveLength(2);
+  });
+
   it("does not expose authenticated endpoints in transport errors", async () => {
     const rpc = createHttpRpcTransport({
       url: "https://rpc.example/v0_9/super-secret-key",

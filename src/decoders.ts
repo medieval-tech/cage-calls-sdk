@@ -7,13 +7,13 @@ import type {
   FightWinner,
   Fighter,
   GachaPoolState,
+  GachaUserStates,
   Market,
   Relic,
   RelicMetadata,
 } from "./types.js";
 
-export function decodeGachaPoolStateRpc(values: readonly string[]): GachaPoolState {
-  const reader = new CairoReader(values, "GachaPoolState");
+function readGachaPoolState(reader: CairoReader): GachaPoolState {
   const state: GachaPoolState = {
     fightId: reader.u256("fightId"),
     open: reader.bool("open"),
@@ -29,8 +29,36 @@ export function decodeGachaPoolStateRpc(values: readonly string[]): GachaPoolSta
       available: reader.u256("available"),
     });
   }
+  return state;
+}
+
+export function decodeGachaPoolStateRpc(values: readonly string[]): GachaPoolState {
+  const reader = new CairoReader(values, "GachaPoolState");
+  const state = readGachaPoolState(reader);
   reader.done();
   return state;
+}
+
+export function decodeGachaUserStatesRpc(values: readonly string[], user: string): GachaUserStates {
+  const reader = new CairoReader(values, "GachaUserStates");
+  const strikeNonce = reader.bigint("strikeNonce");
+  const count = reader.number("states.length");
+  const account = normalizeAddress(user);
+  const states = Array.from({ length: count }, () => {
+    const pool = readGachaPoolState(reader);
+    const ticketBalance = reader.u256("ticketBalance");
+    const escrowedTokenId = reader.u256("escrowedToken");
+    return {
+      fightId: pool.fightId,
+      user: account,
+      strikeNonce,
+      ticketBalance,
+      ...(escrowedTokenId === 0n ? {} : { escrowedTokenId }),
+      pool,
+    };
+  });
+  reader.done();
+  return { user: account, strikeNonce, states };
 }
 
 export function scalarBigInt(value: unknown, label = "value"): bigint {

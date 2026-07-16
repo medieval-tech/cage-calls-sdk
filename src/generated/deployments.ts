@@ -64,7 +64,9 @@ const presets = {
       "relicOwnerPage": false,
       "fighterBatch": false,
       "gachaPoolAggregate": false,
-      "gachaAvailableTokenIds": false
+      "gachaAvailableTokenIds": false,
+      "accountFightFeed": false,
+      "gachaUserStates": false
     }
   },
   "sepolia-dev": {
@@ -111,7 +113,9 @@ const presets = {
       "relicOwnerPage": true,
       "fighterBatch": true,
       "gachaPoolAggregate": true,
-      "gachaAvailableTokenIds": true
+      "gachaAvailableTokenIds": true,
+      "accountFightFeed": false,
+      "gachaUserStates": false
     }
   },
   "sepolia-staging": {
@@ -158,7 +162,9 @@ const presets = {
       "relicOwnerPage": true,
       "fighterBatch": true,
       "gachaPoolAggregate": true,
-      "gachaAvailableTokenIds": true
+      "gachaAvailableTokenIds": true,
+      "accountFightFeed": false,
+      "gachaUserStates": false
     }
   },
 } satisfies Record<NetworkName, CageCallsNetwork>;

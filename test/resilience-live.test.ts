@@ -27,7 +27,7 @@ describe("read resilience", () => {
     expect(coalescer.size).toBe(0);
   });
 
-  it("opens a passive circuit after transient failures without probing", async () => {
+  it("opens a passive circuit immediately on rate limiting without probing", async () => {
     let requests = 0;
     const base: RpcTransport = {
       async request() {
@@ -40,10 +40,9 @@ describe("read resilience", () => {
     const registry = createSourceStatusRegistry();
     const rpc = createResilientRpcTransport(base, registry, { failureThreshold: 2, cooldownMs: 60_000, now: () => 1_000 });
     await expect(rpc.request("one")).rejects.toThrow("rate limited");
-    await expect(rpc.request("two")).rejects.toThrow("rate limited");
-    await expect(rpc.request("three")).rejects.toMatchObject({ transportCode: "CIRCUIT_OPEN" });
-    expect(requests).toBe(2);
-    expect(registry.get("rpc")).toMatchObject({ state: "open", consecutiveFailures: 2, retryAt: 61_000 });
+    await expect(rpc.request("two")).rejects.toMatchObject({ transportCode: "CIRCUIT_OPEN" });
+    expect(requests).toBe(1);
+    expect(registry.get("rpc")).toMatchObject({ state: "open", consecutiveFailures: 1, retryAt: 61_000 });
   });
 
   it("closes the circuit and clears stale diagnostics after a successful half-open request", async () => {

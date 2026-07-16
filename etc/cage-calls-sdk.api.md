@@ -321,6 +321,8 @@ export interface CageCallsClient {
     // (undocumented)
     readonly gacha: GachaRepository;
     // (undocumented)
+    readonly health: CageCallsHealth;
+    // (undocumented)
     readonly live: LiveRepository;
     // (undocumented)
     readonly markets: MarketsRepository;
@@ -336,6 +338,16 @@ export interface CageCallsClient {
 
 // @public (undocumented)
 export type CageCallsErrorCode = "CONFIGURATION_ERROR" | "VALIDATION_ERROR" | "UNSUPPORTED_CAPABILITY" | "TRANSPORT_ERROR" | "ALL_SOURCES_FAILED" | "DECODE_ERROR";
+
+// @public (undocumented)
+export interface CageCallsHealth {
+    // (undocumented)
+    checkNow(): Promise<ReturnType<SourceStatusRegistry["snapshot"]>>;
+    // (undocumented)
+    snapshot(): ReturnType<SourceStatusRegistry["snapshot"]>;
+    // (undocumented)
+    subscribe(listener: (snapshot: ReturnType<SourceStatusRegistry["snapshot"]>, changed: Readonly<SourceStatus>) => void): () => void;
+}
 
 // @public (undocumented)
 export interface CageCallsLiveObserver {
@@ -542,7 +554,7 @@ export class CairoReader {
 }
 
 // @public (undocumented)
-export type CapabilityName = "fightFeed" | "fightBuyPagination" | "relicFeed" | "relicBatch" | "relicOwnerPage" | "fighterBatch" | "gachaPoolAggregate" | "gachaAvailableTokenIds";
+export type CapabilityName = "fightFeed" | "fightBuyPagination" | "relicFeed" | "relicBatch" | "relicOwnerPage" | "fighterBatch" | "gachaPoolAggregate" | "gachaAvailableTokenIds" | "accountFightFeed" | "gachaUserStates";
 
 // @public (undocumented)
 export interface CapabilityRegistry {
@@ -634,6 +646,8 @@ export function createFallbackRpcTransport(options: {
     maxConcurrency?: number;
     maxRetries?: number;
     retryBaseDelayMs?: number;
+    cooldownMs?: number;
+    now?: () => number;
 }): RpcTransport;
 
 // @public (undocumented)
@@ -682,6 +696,19 @@ export function createResilientRpcTransport(transport: RpcTransport, registry: R
 
 // @public (undocumented)
 export function createResilientToriiTransport(transport: ToriiTransport, registry: ReturnType<typeof createSourceStatusRegistry>, options?: PassiveCircuitOptions): ToriiTransport;
+
+// @public
+export function createRpcPoolTransport(options: {
+    endpoints: readonly RpcPoolEndpoint[];
+    fetch?: typeof fetch;
+    logger?: SdkLogger;
+    timeoutMs?: number;
+    maxConcurrency?: number;
+    maxRetries?: number;
+    retryBaseDelayMs?: number;
+    cooldownMs?: number;
+    now?: () => number;
+}): RpcTransport;
 
 // @public (undocumented)
 export function createSourceStatusRegistry(): SourceStatusRegistry & {
@@ -776,6 +803,9 @@ export function decodeFightWinnerRpc(values: readonly string[]): FightWinner;
 export function decodeGachaPoolStateRpc(values: readonly string[]): GachaPoolState;
 
 // @public (undocumented)
+export function decodeGachaUserStatesRpc(values: readonly string[], user: string): GachaUserStates;
+
+// @public (undocumented)
 export function decodeMarketRpc(values: readonly string[]): Market;
 
 // @public (undocumented)
@@ -818,6 +848,8 @@ export const DEFAULT_REQUEST_BUDGET: Readonly<RequestBudget>;
 // @public (undocumented)
 export interface DeploymentCapabilities {
     // (undocumented)
+    accountFightFeed: boolean;
+    // (undocumented)
     fightBuyPagination: boolean;
     // (undocumented)
     fighterBatch: boolean;
@@ -827,6 +859,8 @@ export interface DeploymentCapabilities {
     gachaAvailableTokenIds: boolean;
     // (undocumented)
     gachaPoolAggregate: boolean;
+    // (undocumented)
+    gachaUserStates: boolean;
     // (undocumented)
     relicBatch: boolean;
     // (undocumented)
@@ -981,6 +1015,15 @@ export interface FightEventsRepository {
         viewer?: Address;
         now?: bigint;
     }, options?: RequestOptions): Promise<DataResult<FightEvent[]>>;
+    // (undocumented)
+    get(eventName: string, input?: {
+        seasonId?: bigint;
+        viewer?: Address;
+        expectedFightCount?: number;
+        cursor?: bigint;
+        limit?: number;
+        now?: bigint;
+    }, options?: RequestOptions): Promise<DataResult<FightEvent | undefined>>;
     // @deprecated (undocumented)
     list(input?: {
         limit?: number;
@@ -1053,6 +1096,13 @@ export interface FightPotState {
 
 // @public (undocumented)
 export interface FightsRepository {
+    // (undocumented)
+    accountFeed(account: Address, input?: {
+        limit?: number;
+        cursor?: bigint;
+    }, options?: RequestOptions): Promise<DataResult<Page<FightFeedItem, bigint>>>;
+    // (undocumented)
+    accountFeedAll(account: Address, options?: RequestOptions): Promise<DataResult<FightFeedItem[]>>;
     // (undocumented)
     all(input?: {
         seasonId?: bigint;
@@ -1137,6 +1187,12 @@ export interface FightWinner {
 export function filterRelicCollection(relics: readonly Relic[], filter?: RelicStatsFilter, fighters?: readonly Fighter[]): Relic[];
 
 // @public (undocumented)
+export interface GachaFightUserState extends GachaUserState {
+    // (undocumented)
+    pool: GachaPoolState;
+}
+
+// @public (undocumented)
 export interface GachaPoolState {
     // (undocumented)
     availableTokenIds?: bigint[];
@@ -1178,6 +1234,8 @@ export interface GachaRepository {
     // (undocumented)
     user(fightId: bigint, account: Address, options?: RequestOptions): Promise<DataResult<GachaUserState>>;
     // (undocumented)
+    userStates(fightIds: readonly bigint[], account: Address, options?: RequestOptions): Promise<DataResult<GachaUserStates>>;
+    // (undocumented)
     vrfAddress(options?: RequestOptions): Promise<DataResult<Address>>;
 }
 
@@ -1191,6 +1249,16 @@ export interface GachaUserState {
     strikeNonce: bigint;
     // (undocumented)
     ticketBalance: bigint;
+    // (undocumented)
+    user: Address;
+}
+
+// @public (undocumented)
+export interface GachaUserStates {
+    // (undocumented)
+    states: GachaFightUserState[];
+    // (undocumented)
+    strikeNonce: bigint;
     // (undocumented)
     user: Address;
 }
@@ -1268,6 +1336,8 @@ export const MAINNET_PRESET: {
         fighterBatch: false;
         gachaPoolAggregate: false;
         gachaAvailableTokenIds: false;
+        accountFightFeed: false;
+        gachaUserStates: false;
     };
 };
 
@@ -1446,6 +1516,8 @@ export const NETWORK_PRESETS: Readonly<{
             fighterBatch: false;
             gachaPoolAggregate: false;
             gachaAvailableTokenIds: false;
+            accountFightFeed: false;
+            gachaUserStates: false;
         };
     };
     "sepolia-dev": {
@@ -1493,6 +1565,8 @@ export const NETWORK_PRESETS: Readonly<{
             fighterBatch: true;
             gachaPoolAggregate: true;
             gachaAvailableTokenIds: true;
+            accountFightFeed: false;
+            gachaUserStates: false;
         };
     };
     "sepolia-staging": {
@@ -1540,6 +1614,8 @@ export const NETWORK_PRESETS: Readonly<{
             fighterBatch: true;
             gachaPoolAggregate: true;
             gachaAvailableTokenIds: true;
+            accountFightFeed: false;
+            gachaUserStates: false;
         };
     };
 }>;
@@ -1993,6 +2069,7 @@ export interface RequestOptions {
     relicBatchSize?: number;
     // (undocumented)
     signal?: AbortSignal;
+    timeoutMs?: number;
     // (undocumented)
     traversal?: Partial<TraversalLimits>;
 }
@@ -2032,6 +2109,16 @@ export interface RpcCall {
     contractAddress: Address;
     // (undocumented)
     entrypoint: string;
+}
+
+// @public (undocumented)
+export interface RpcPoolEndpoint {
+    // (undocumented)
+    headers?: Readonly<Record<string, string>>;
+    // (undocumented)
+    name: string;
+    // (undocumented)
+    url: string;
 }
 
 // @public (undocumented)
@@ -2123,6 +2210,8 @@ export const SEPOLIA_DEV_PRESET: {
         fighterBatch: true;
         gachaPoolAggregate: true;
         gachaAvailableTokenIds: true;
+        accountFightFeed: false;
+        gachaUserStates: false;
     };
 };
 
@@ -2172,6 +2261,8 @@ export const SEPOLIA_STAGING_PRESET: {
         fighterBatch: true;
         gachaPoolAggregate: true;
         gachaAvailableTokenIds: true;
+        accountFightFeed: false;
+        gachaUserStates: false;
     };
 };
 

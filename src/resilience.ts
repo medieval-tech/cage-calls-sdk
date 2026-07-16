@@ -147,6 +147,12 @@ function isTransient(error: unknown): boolean {
   return code.includes("TIMEOUT") || code.includes("NETWORK") || code.includes("TRANSPORT") || code.includes("429");
 }
 
+function shouldOpenImmediately(error: unknown): boolean {
+  if (!(error instanceof TransportError)) return false;
+  return error.status === 408 || error.status === 429 || error.rpcCode === 429
+    || diagnosticCode(error).toUpperCase().includes("TIMEOUT");
+}
+
 interface Circuit {
   run<T>(task: () => Promise<T>): Promise<T>;
 }
@@ -186,7 +192,7 @@ function createCircuit(
         if (isTransient(error)) {
           const current = registry.get(source);
           const failures = current.consecutiveFailures + 1;
-          const opened = current.state === "half-open" || failures >= threshold;
+          const opened = current.state === "half-open" || shouldOpenImmediately(error) || failures >= threshold;
           registry.update(source, {
             state: opened ? "open" : "closed",
             consecutiveFailures: failures,
@@ -204,7 +210,11 @@ function createCircuit(
 }
 
 function requestOptionsWithoutSignal(options?: RequestOptions): RequestOptions {
-  return options?.traversal ? { traversal: options.traversal } : {};
+  return {
+    ...(options?.traversal ? { traversal: options.traversal } : {}),
+    ...(options?.relicBatchSize === undefined ? {} : { relicBatchSize: options.relicBatchSize }),
+    ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+  };
 }
 
 export function createResilientRpcTransport(

@@ -268,7 +268,10 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
     let timeout: ReturnType<typeof withTimeout> | undefined;
     try {
       release = await acquire(requestOptions.signal);
-      timeout = withTimeout(requestOptions.signal, timeoutMs);
+      const requestTimeoutMs = requestOptions.timeoutMs === undefined
+        ? timeoutMs
+        : Math.min(timeoutMs, requestOptions.timeoutMs);
+      timeout = withTimeout(requestOptions.signal, requestTimeoutMs);
       if (timeout.signal.aborted) throw abortError();
       for (let retry = 0; ; retry += 1) {
         requestStartedAt = Date.now();
@@ -367,6 +370,94 @@ function attemptsFromError(error: unknown): SourceAttempt[] {
   return [];
 }
 
+export interface RpcPoolEndpoint {
+  name: string;
+  url: string;
+  headers?: Readonly<Record<string, string>>;
+}
+
+/** Ordered RPC failover with independent overload/timeout cooldown per endpoint. */
+export function createRpcPoolTransport(options: {
+  endpoints: readonly RpcPoolEndpoint[];
+  fetch?: typeof fetch;
+  logger?: SdkLogger;
+  timeoutMs?: number;
+  maxConcurrency?: number;
+  maxRetries?: number;
+  retryBaseDelayMs?: number;
+  cooldownMs?: number;
+  now?: () => number;
+}): RpcTransport {
+  if (options.endpoints.length === 0) throw new ConfigurationError("RPC pool requires at least one endpoint.");
+  const now = options.now ?? Date.now;
+  const cooldownMs = options.cooldownMs ?? 30_000;
+  const retryAt = options.endpoints.map(() => 0);
+  const endpoints = options.endpoints.map((endpoint, index) => ({
+    name: endpoint.name,
+    url: validateHttpUrl(endpoint.url, `RPC pool endpoint ${endpoint.name}`),
+    transport: createHttpRpcTransport({
+      url: endpoint.url,
+      endpointRole: index === 0 ? "primary" : "fallback",
+      ...(endpoint.headers ? { headers: endpoint.headers } : {}),
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+      ...(options.logger ? { logger: options.logger } : {}),
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.maxConcurrency === undefined ? {} : { maxConcurrency: options.maxConcurrency }),
+      ...(options.maxRetries === undefined ? {} : { maxRetries: options.maxRetries }),
+      ...(options.retryBaseDelayMs === undefined ? {} : { retryBaseDelayMs: options.retryBaseDelayMs }),
+    }),
+  }));
+  const request = async <T>(method: string, params?: readonly unknown[] | Record<string, unknown>, requestOptions?: RequestOptions) => {
+    const available = endpoints.map((_, index) => index).filter((index) => (retryAt[index] ?? 0) <= now());
+    const candidates = available.length > 0
+      ? available
+      : [retryAt.reduce((best, value, index, values) => value < (values[best] ?? Number.POSITIVE_INFINITY) ? index : best, 0)];
+    const attempts: SourceAttempt[] = [];
+    let lastError: unknown;
+    for (const index of candidates) {
+      const endpoint = endpoints[index];
+      if (!endpoint) continue;
+      try {
+        const response = await endpoint.transport.request<T>(method, params, requestOptions);
+        retryAt[index] = 0;
+        return { ...response, attempts: [...attempts, ...response.attempts.map((value) => ({ ...value, fallback: index > 0 }))] };
+      } catch (error) {
+        lastError = error;
+        attempts.push(...attemptsFromError(error).map((value) => ({ ...value, fallback: index > 0 })));
+        const code = transportDiagnosticCode(error).toUpperCase();
+        if (error instanceof TransportError && (
+          error.status === 408 || error.status === 429 || error.rpcCode === 429 || code.includes("TIMEOUT")
+        )) retryAt[index] = now() + cooldownMs;
+        if (requestOptions?.signal?.aborted || code === "ABORTED") break;
+        options.logger?.warn?.("Cage Calls RPC pool selected the next endpoint.", {
+          method,
+          failedEndpoint: endpoint.name,
+          failedEndpointUrl: redactUrl(endpoint.url),
+          errorCode: code,
+        });
+      }
+    }
+    const error = lastError instanceof Error ? lastError : new TransportError("starknet-rpc", "Every RPC pool endpoint failed.");
+    Object.defineProperty(error, "attempts", { value: attempts });
+    throw error;
+  };
+  return {
+    request,
+    async call(input, requestOptions) {
+      const call = {
+        contract_address: normalizeAddress(input.contractAddress),
+        entry_point_selector: selectorFromName(input.entrypoint),
+        calldata: (input.calldata ?? []).map((value) => normalizeFelt(value)),
+      };
+      return request<string[]>("starknet_call", [call, input.blockId ?? "latest"], requestOptions);
+    },
+    async getClassHashAt(address, requestOptions) {
+      const response = await request<string>("starknet_getClassHashAt", ["latest", normalizeAddress(address)], requestOptions);
+      return { ...response, data: normalizeFelt(response.data) };
+    },
+  };
+}
+
 export function createFallbackRpcTransport(options: {
   primaryUrl?: string;
   fallbackUrl: string;
@@ -377,6 +468,9 @@ export function createFallbackRpcTransport(options: {
   maxConcurrency?: number;
   maxRetries?: number;
   retryBaseDelayMs?: number;
+  /** Cooldown applied to an overloaded/timed-out primary before it is probed again. */
+  cooldownMs?: number;
+  now?: () => number;
 }): RpcTransport {
   const fallbackUrl = validateHttpUrl(options.fallbackUrl, "Fallback RPC URL");
   const primaryUrl = options.primaryUrl ? validateHttpUrl(options.primaryUrl, "Primary RPC URL") : undefined;
@@ -404,12 +498,26 @@ export function createFallbackRpcTransport(options: {
       })
     : fallback;
 
+  const now = options.now ?? Date.now;
+  const cooldownMs = options.cooldownMs ?? 30_000;
+  let primaryRetryAt = 0;
   const request = async <T>(method: string, params?: readonly unknown[] | Record<string, unknown>, requestOptions?: RequestOptions) => {
+    if (primary !== fallback && primaryRetryAt > now()) {
+      const result = await fallback.request<T>(method, params, requestOptions);
+      return { ...result, attempts: result.attempts.map((value) => ({ ...value, fallback: true })) };
+    }
     try {
-      return await primary.request<T>(method, params, requestOptions);
+      const result = await primary.request<T>(method, params, requestOptions);
+      primaryRetryAt = 0;
+      return result;
     } catch (primaryError) {
       if (primary === fallback) throw primaryError;
       if (requestOptions?.signal?.aborted || transportDiagnosticCode(primaryError) === "ABORTED") throw primaryError;
+      const code = transportDiagnosticCode(primaryError).toUpperCase();
+      if (primaryError instanceof TransportError && (
+        primaryError.status === 408 || primaryError.status === 429 || primaryError.rpcCode === 429
+        || code.includes("TIMEOUT")
+      )) primaryRetryAt = now() + cooldownMs;
       options.logger?.warn?.("Cage Calls RPC fallback selected.", {
         method,
         primaryEndpoint: redactUrl(primaryUrl ?? fallbackUrl),

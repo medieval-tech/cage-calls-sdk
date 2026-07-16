@@ -149,6 +149,56 @@ async function enrichPools(
   return { fights: enriched, complete };
 }
 
+async function enrichAccountFights(
+  context: RepositoryContext,
+  gacha: GachaRepository,
+  fights: readonly FightFeedItem[],
+  account: Address,
+  attempts: SourceAttempt[],
+  warnings: DataWarning[],
+  options: RequestOptions,
+): Promise<{ fights: AccountEventFightState[]; complete: boolean }> {
+  let complete = true;
+  const output: AccountEventFightState[] = [];
+  if (typeof gacha.userStates !== "function") {
+    const legacy = await mapConcurrent(fights, context.budget.maxConcurrency, async (fight): Promise<AccountEventFightState> => {
+      try {
+        const [pool, user] = await Promise.all([gacha.pool(fight.fightId, options), gacha.user(fight.fightId, account, options)]);
+        attempts.push(...pool.meta.attempts, ...user.meta.attempts);
+        complete &&= pool.meta.complete && user.meta.complete;
+        return { fight, gachaPool: pool.data, gachaUser: user.data };
+      } catch (error) {
+        attempts.push(...transportAttemptsFromError(error));
+        warnings.push(warning(`Gacha account state for fight ${fight.fightId}`, error));
+        complete = false;
+        return { fight };
+      }
+    });
+    return { fights: legacy, complete };
+  }
+  for (let offset = 0; offset < fights.length; offset += 20) {
+    const batch = fights.slice(offset, offset + 20);
+    try {
+      const states = await gacha.userStates(batch.map((fight) => fight.fightId), account, options);
+      attempts.push(...states.meta.attempts);
+      warnings.push(...states.meta.warnings);
+      complete &&= states.meta.complete;
+      const byFight = new Map(states.data.states.map((state) => [state.fightId.toString(), state]));
+      for (const fight of batch) {
+        const state = byFight.get(fight.fightId.toString());
+        output.push(state ? { fight, gachaPool: state.pool, gachaUser: state } : { fight });
+        if (!state) complete = false;
+      }
+    } catch (error) {
+      attempts.push(...transportAttemptsFromError(error));
+      warnings.push(warning("Gacha account-state batch", error));
+      complete = false;
+      output.push(...batch.map((fight) => ({ fight })));
+    }
+  }
+  return { fights: output, complete };
+}
+
 export function createAggregateRepositories(
   context: RepositoryContext,
   dependencies: {
@@ -188,22 +238,9 @@ export function createAggregateRepositories(
     attempts.push(...feed.meta.attempts);
     warnings.push(...feed.meta.warnings);
     const fights = feed.data.filter((fight) => matchesEvent(fight, ref));
-    const publicFights = await enrichPools(context, dependencies.gacha, fights, attempts, warnings, options);
-    let accountComplete = feed.meta.complete && publicFights.complete;
-    const accountFights = await mapConcurrent(publicFights.fights, context.budget.maxConcurrency, async (fight): Promise<AccountEventFightState> => {
-      try {
-        const user = await dependencies.gacha.user(fight.fight.fightId, account, options);
-        attempts.push(...user.meta.attempts);
-        warnings.push(...user.meta.warnings);
-        accountComplete &&= user.meta.complete;
-        return { ...fight, gachaUser: user.data };
-      } catch (error) {
-        attempts.push(...transportAttemptsFromError(error));
-        warnings.push(warning(`Gacha account state for fight ${fight.fight.fightId}`, error));
-        accountComplete = false;
-        return fight;
-      }
-    });
+    const accountState = await enrichAccountFights(context, dependencies.gacha, fights, account, attempts, warnings, options);
+    let accountComplete = feed.meta.complete && accountState.complete;
+    const accountFights = accountState.fights;
     let relics: Relic[] = [];
     let relicsComplete = false;
     if (relicResult.status === "fulfilled") {
@@ -235,8 +272,15 @@ export function createAggregateRepositories(
         const startedAt = context.now();
         const attempts: SourceAttempt[] = [];
         const warnings: DataWarning[] = [];
+        const accountFeed = (typeof dependencies.fights.accountFeedAll === "function"
+          ? dependencies.fights.accountFeedAll(account, options)
+          : Promise.reject(new Error("Account fight feed is unavailable"))).catch(() =>
+          dependencies.fights.feedAll({ viewer: account }, options).then((value) => ({
+            ...value,
+            data: value.data.filter((fight) => fight.viewer.hasBought || fight.viewer.strikeTickets > 0n),
+          })));
         const reads = await Promise.allSettled([
-          dependencies.fights.feedAll({ viewer: account }, options),
+          accountFeed,
           dependencies.fights.portfolioAll(account, options),
           dependencies.relics.owned(account, options),
           dependencies.tokens.callsBalance(account, options),
@@ -262,23 +306,9 @@ export function createAggregateRepositories(
         const buys = absorb(buysRead, "Fight buys", [] as FightBuy[]);
         const relicPage = absorb(relicsRead, "Owned relics", undefined);
         const callsBalance = absorb(balanceRead, "CALLS balance", 0n);
-        const relevant = feed.data.filter((fight) => fight.viewer.hasBought || fight.viewer.strikeTickets > 0n);
-        const publicFights = await enrichPools(context, dependencies.gacha, relevant, attempts, warnings, options);
-        complete &&= publicFights.complete;
-        const fights = await mapConcurrent(publicFights.fights, context.budget.maxConcurrency, async (fight): Promise<AccountEventFightState> => {
-          try {
-            const user = await dependencies.gacha.user(fight.fight.fightId, account, options);
-            attempts.push(...user.meta.attempts);
-            warnings.push(...user.meta.warnings);
-            complete &&= user.meta.complete;
-            return { ...fight, gachaUser: user.data };
-          } catch (error) {
-            attempts.push(...transportAttemptsFromError(error));
-            warnings.push(warning(`Gacha account state for fight ${fight.fight.fightId}`, error));
-            complete = false;
-            return fight;
-          }
-        });
+        const accountState = await enrichAccountFights(context, dependencies.gacha, feed.data, account, attempts, warnings, options);
+        complete &&= accountState.complete;
+        const fights = accountState.fights;
         const relics = relicPage?.items ?? [];
         return aggregateResult(context, startedAt, {
           account,

@@ -9,6 +9,7 @@ import {
   decodeFighterRpc,
   decodeFightWinnerRpc,
   decodeGachaPoolStateRpc,
+  decodeGachaUserStatesRpc,
   decodeMarketRpc,
   decodeSingleBool,
   decodeSingleNumber,
@@ -41,6 +42,7 @@ import type {
   Fighter,
   GachaPoolState,
   GachaUserState,
+  GachaUserStates,
   Market,
   MarketCatalogItem,
   MarketPosition,
@@ -229,6 +231,8 @@ export interface FightsRepository {
   list(input?: { limit?: number; cursor?: string; seasonId?: bigint }, options?: RequestOptions): Promise<DataResult<Page<Fight>>>;
   feed(input?: { limit?: number; cursor?: bigint; viewer?: Address }, options?: RequestOptions): Promise<DataResult<Page<FightFeedItem, bigint>>>;
   feedAll(input?: { viewer?: Address }, options?: RequestOptions): Promise<DataResult<FightFeedItem[]>>;
+  accountFeed(account: Address, input?: { limit?: number; cursor?: bigint }, options?: RequestOptions): Promise<DataResult<Page<FightFeedItem, bigint>>>;
+  accountFeedAll(account: Address, options?: RequestOptions): Promise<DataResult<FightFeedItem[]>>;
   buys(fightId: bigint, input?: { offset?: number; limit?: number }, options?: RequestOptions): Promise<DataResult<Page<FightBuy, number>>>;
   buysAll(fightId: bigint, options?: RequestOptions): Promise<DataResult<FightBuy[]>>;
   viewerState(fightId: bigint, viewer: Address, options?: RequestOptions): Promise<DataResult<FightViewerState>>;
@@ -464,6 +468,56 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
         message: "Fight feed used bounded singleton RPC views because the aggregate view is unavailable.",
         source: "starknet-rpc",
       }]);
+    },
+    async accountFeed(account, input = {}, options = {}) {
+      const startedAt = context.now();
+      const supported = context.capabilities.has("accountFightFeed")
+        || await context.capabilities.probe("accountFightFeed", options.signal);
+      if (!supported) throw new UnsupportedCapabilityError("account fight feed");
+      const size = clampPageSize(input.limit, 20, 20);
+      const response = await rpcCall(context, "FightFactory", "get_account_fight_feed", [
+        normalizeAddress(account),
+        ...encodeU256(input.cursor ?? 0n),
+        size.toString(),
+      ], options);
+      const items = decodeFightFeedRpc(response.data);
+      const oldest = items.at(-1)?.fightId ?? 0n;
+      const cursor = oldest > 1n ? oldest : 0n;
+      return result(context, startedAt, "starknet-rpc", {
+        items,
+        cursor,
+        hasMore: items.length === size && cursor > 1n,
+      }, response.attempts);
+    },
+    async accountFeedAll(account, options = {}) {
+      const startedAt = context.now();
+      const budget = resolveRequestBudget(context.budget, options);
+      const items: FightFeedItem[] = [];
+      const attempts: SourceAttempt[] = [];
+      const warnings: DataWarning[] = [];
+      let cursor = 0n;
+      let exhausted = false;
+      for (let pageIndex = 0; pageIndex < budget.maxRpcPages && items.length < budget.maxRpcItems; pageIndex += 1) {
+        const page = await createFightsRepository(context).accountFeed(account, {
+          cursor,
+          limit: Math.min(20, budget.maxRpcItems - items.length),
+        }, options);
+        items.push(...page.data.items);
+        attempts.push(...page.meta.attempts);
+        if (!page.data.hasMore) { exhausted = true; break; }
+        const next = page.data.cursor ?? 0n;
+        if (next === 0n || next === cursor) {
+          warnings.push({ code: "RPC_CURSOR_STALLED", message: `Account fight feed stopped at cursor ${next}.`, source: "starknet-rpc" });
+          break;
+        }
+        cursor = next;
+      }
+      if (!exhausted) warnings.push({
+        code: items.length >= budget.maxRpcItems ? "RPC_ITEM_LIMIT" : "RPC_PAGE_LIMIT",
+        message: "Account fight feed stopped at the configured traversal budget.",
+        source: "starknet-rpc",
+      });
+      return result(context, startedAt, "starknet-rpc", items, attempts, exhausted, warnings);
     },
     async buys(fightId, input = {}, options = {}) {
       const startedAt = context.now();
@@ -815,6 +869,7 @@ export function createTokensRepository(context: RepositoryContext): TokensReposi
 export interface GachaRepository {
   pool(fightId: bigint, options?: RequestOptions): Promise<DataResult<GachaPoolState>>;
   user(fightId: bigint, account: Address, options?: RequestOptions): Promise<DataResult<GachaUserState>>;
+  userStates(fightIds: readonly bigint[], account: Address, options?: RequestOptions): Promise<DataResult<GachaUserStates>>;
   availableTokenIds(fightId: bigint, input?: { cursor?: bigint; limit?: number }, options?: RequestOptions): Promise<DataResult<Page<bigint, bigint>>>;
   availableTokenIdsAll(fightId: bigint, options?: RequestOptions): Promise<DataResult<bigint[]>>;
   isAdmin(account: Address, options?: RequestOptions): Promise<DataResult<boolean>>;
@@ -888,6 +943,37 @@ export function createGachaRepository(context: RepositoryContext, tokens: Tokens
         ticketBalance: tickets.data,
       }, [...escrow.attempts, ...nonce.attempts, ...tickets.meta.attempts]);
     },
+    async userStates(fightIds, account, options = {}) {
+      const startedAt = context.now();
+      const ids = fightIds.slice(0, 20);
+      const supported = context.capabilities.has("gachaUserStates")
+        || await context.capabilities.probe("gachaUserStates", options.signal);
+      if (supported) {
+        const response = await rpcCall(context, "Gacha", "get_user_states", [
+          ids.length.toString(),
+          ...ids.flatMap(encodeU256),
+          normalizeAddress(account),
+        ], options);
+        return result(context, startedAt, "starknet-rpc", decodeGachaUserStatesRpc(response.data, account), response.attempts);
+      }
+      const states = await mapConcurrent(ids, context.budget.maxConcurrency, async (fightId) => {
+        const [userState, poolState] = await Promise.all([
+          createGachaRepository(context, tokens).user(fightId, account, options),
+          createGachaRepository(context, tokens).pool(fightId, options),
+        ]);
+        return { data: { ...userState.data, pool: poolState.data }, attempts: [...userState.meta.attempts, ...poolState.meta.attempts] };
+      });
+      const strikeNonce = states[0]?.data.strikeNonce ?? 0n;
+      return result(context, startedAt, "starknet-rpc", {
+        user: normalizeAddress(account),
+        strikeNonce,
+        states: states.map((value) => value.data),
+      }, states.flatMap((value) => value.attempts), false, [{
+        code: "CAPABILITY_FALLBACK",
+        message: "Gacha account states used singleton RPC views because the batch view is unavailable.",
+        source: "starknet-rpc",
+      }]);
+    },
     async availableTokenIds(fightId, input = {}, options = {}) {
       const startedAt = context.now();
       const supported = context.capabilities.has("gachaAvailableTokenIds") || await context.capabilities.probe("gachaAvailableTokenIds", options.signal);
@@ -948,6 +1034,7 @@ export function createGachaRepository(context: RepositoryContext, tokens: Tokens
 }
 
 export interface FightEventsRepository {
+  get(eventName: string, input?: { seasonId?: bigint; viewer?: Address; expectedFightCount?: number; cursor?: bigint; limit?: number; now?: bigint }, options?: RequestOptions): Promise<DataResult<FightEvent | undefined>>;
   all(input?: { viewer?: Address; now?: bigint }, options?: RequestOptions): Promise<DataResult<FightEvent[]>>;
   page(input?: { limit?: number; cursor?: bigint; viewer?: Address; now?: bigint }, options?: RequestOptions): Promise<DataResult<Page<FightEvent, bigint>>>;
   /** @deprecated Use page(). */
@@ -983,6 +1070,41 @@ export function createFightEventsRepository(context: RepositoryContext, fights: 
     }, response.meta.attempts, response.meta.complete, response.meta.warnings);
   };
   return {
+    async get(eventName, input = {}, options = {}) {
+      const startedAt = context.now();
+      const budget = resolveRequestBudget(context.budget, options);
+      const attempts: SourceAttempt[] = [];
+      const warnings: DataWarning[] = [];
+      const matches: FightFeedItem[] = [];
+      let cursor = input.cursor ?? 0n;
+      let exhausted = false;
+      const expected = input.expectedFightCount;
+      for (let index = 0; index < budget.maxRpcPages && matches.length < (expected ?? Number.POSITIVE_INFINITY); index += 1) {
+        const response = await fights.feed({
+          cursor,
+          limit: Math.min(input.limit ?? 20, 20),
+          ...(input.viewer === undefined ? {} : { viewer: input.viewer }),
+        }, options);
+        attempts.push(...response.meta.attempts);
+        warnings.push(...response.meta.warnings);
+        matches.push(...response.data.items.filter((fight) =>
+          fight.eventName === eventName && (input.seasonId === undefined || fight.seasonId === input.seasonId)));
+        if (!response.data.hasMore) { exhausted = true; break; }
+        const next = response.data.cursor ?? 0n;
+        if (next === 0n || next === cursor) break;
+        cursor = next;
+      }
+      const grouped = group(matches, input.now ?? BigInt(Math.floor(context.now() / 1_000)))[0];
+      const complete = expected === undefined ? exhausted : matches.length >= expected;
+      if (!complete) warnings.push({
+        code: "RPC_PAGE_LIMIT",
+        message: expected === undefined
+          ? "Event lookup stopped before the fight feed was exhausted."
+          : `Event lookup found ${matches.length} of ${expected} expected fights.`,
+        source: "starknet-rpc",
+      });
+      return result(context, startedAt, "derived", grouped, attempts, complete, warnings);
+    },
     async all(input = {}, options = {}) {
       const startedAt = context.now();
       const response = await fights.feedAll({ ...(input.viewer ? { viewer: input.viewer } : {}) }, options);

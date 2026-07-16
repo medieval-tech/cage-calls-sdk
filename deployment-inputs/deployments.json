@@ -36,7 +36,7 @@
         "VaultFees": ["0x5fdd338f6b4e60962e6372a708179a010ece20543a84004402098c17e323aa3", "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e"],
         "VaultPositions": ["0x1036cc389d07693bab59080cc4a89df2db9000109530423f520e61adc8b0040", "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730"]
       },
-      "capabilities": { "fightFeed": false, "fightBuyPagination": false, "relicFeed": false, "relicBatch": false, "relicOwnerPage": false, "fighterBatch": false, "gachaPoolAggregate": false, "gachaAvailableTokenIds": false }
+      "capabilities": { "fightFeed": false, "fightBuyPagination": false, "relicFeed": false, "relicBatch": false, "relicOwnerPage": false, "fighterBatch": false, "gachaPoolAggregate": false, "gachaAvailableTokenIds": false, "accountFightFeed": false, "gachaUserStates": false }
     },
     "sepolia-dev": {
       "chainId": "0x534e5f5345504f4c4941",
@@ -56,7 +56,7 @@
         "VaultFees": ["0x3b68e61258384337d1a7e6d0fe82d4a13e8036ae9345ded5e8a269b1ad07a0c", "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e"],
         "VaultPositions": ["0x78c5caae484ea442b9469741a074e6f632401463fa4e5511a276ec47b1f1d01", "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730"]
       },
-      "capabilities": { "fightFeed": true, "fightBuyPagination": true, "relicFeed": true, "relicBatch": true, "relicOwnerPage": true, "fighterBatch": true, "gachaPoolAggregate": true, "gachaAvailableTokenIds": true }
+      "capabilities": { "fightFeed": true, "fightBuyPagination": true, "relicFeed": true, "relicBatch": true, "relicOwnerPage": true, "fighterBatch": true, "gachaPoolAggregate": true, "gachaAvailableTokenIds": true, "accountFightFeed": false, "gachaUserStates": false }
     },
     "sepolia-staging": {
       "chainId": "0x534e5f5345504f4c4941",
@@ -76,7 +76,7 @@
         "VaultFees": ["0x48ffc5214524498eca29341129f998634bc1b559219dcc632fb6f727186f099", "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e"],
         "VaultPositions": ["0x356065a95fc27771a672331148c3b02c4a2a2f6161b88631e7a33a0616a7903", "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730"]
       },
-      "capabilities": { "fightFeed": true, "fightBuyPagination": true, "relicFeed": true, "relicBatch": true, "relicOwnerPage": true, "fighterBatch": true, "gachaPoolAggregate": true, "gachaAvailableTokenIds": true }
+      "capabilities": { "fightFeed": true, "fightBuyPagination": true, "relicFeed": true, "relicBatch": true, "relicOwnerPage": true, "fighterBatch": true, "gachaPoolAggregate": true, "gachaAvailableTokenIds": true, "accountFightFeed": false, "gachaUserStates": false }
     }
   }
 }
