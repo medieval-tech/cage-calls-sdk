@@ -7,6 +7,7 @@ import { readAllToriiModels } from "../transports/torii-models.js";
 import { transportAttemptsFromError } from "../transports/index.js";
 import type {
   Address,
+  AdminCapabilities,
   ContractName,
   DataResult,
   DataWarning,
@@ -26,7 +27,14 @@ const ROLE_MODELS = {
   RelicNFT: "RelicMinter",
 } as const;
 
+export const ADMIN_ROLE_IDS = Object.freeze({
+  relicMinter: normalizeFelt("0x32df0fed2c77648de5860a4cc508cd0818c85b8b8a1ab4ceeef8d981c8956a6"),
+  marketsTokenManager: normalizeFelt("0x544f4b454e5f4d414e414745525f524f4c45"),
+  defaultAdmin: normalizeFelt("0x2ffbbff9c66c5e59634f24fe842750c60d18891155c32dd155fc2d661a4c86d"),
+});
+
 export interface AdminRepository {
+  capabilities(account: Address, options?: RequestOptions): Promise<DataResult<AdminCapabilities>>;
   isAdmin(contract: "FightFactory" | "FighterRegistry" | "Gacha" | "CageCallsOracle", account: Address, options?: RequestOptions): Promise<DataResult<boolean>>;
   hasRole(contract: ContractName, role: Felt, account: Address, options?: RequestOptions): Promise<DataResult<boolean>>;
   roles(options?: RequestOptions): Promise<DataResult<RoleMembership[]>>;
@@ -39,6 +47,7 @@ export interface AdminRepository {
 }
 
 export function createAdminRepository(context: RepositoryContext): AdminRepository {
+  const capabilityCache = new Map<string, { expiresAt: number; value: Promise<DataResult<AdminCapabilities>> }>();
   const rpc = async (contract: ContractName, entrypoint: string, calldata: string[], options: RequestOptions) =>
     context.rpc.call({ contractAddress: context.network.contracts[contract], entrypoint, calldata }, options);
 
@@ -100,6 +109,69 @@ export function createAdminRepository(context: RepositoryContext): AdminReposito
   };
 
   return {
+    capabilities(accountInput, options = {}) {
+      const account = normalizeAddress(accountInput);
+      const cacheKey = `${context.network.chainId}:${context.network.worldAddress}:${context.network.deploymentRevision}:${account}`;
+      const cached = capabilityCache.get(cacheKey);
+      if (cached && cached.expiresAt > context.now()) return cached.value;
+
+      const value = (async () => {
+        const startedAt = context.now();
+        const checks = await Promise.allSettled([
+          rpc("FightFactory", "is_admin", [account], options),
+          rpc("FighterRegistry", "is_admin", [account], options),
+          rpc("Gacha", "is_admin", [account], options),
+          rpc("CageCallsOracle", "is_admin", [account], options),
+          rpc("RelicNFT", "has_role", [ADMIN_ROLE_IDS.relicMinter, account], options),
+          rpc("Markets", "has_role", [ADMIN_ROLE_IDS.marketsTokenManager, account], options),
+          rpc("RelicNFT", "has_role", [ADMIN_ROLE_IDS.defaultAdmin, account], options),
+          rpc("Markets", "has_role", [ADMIN_ROLE_IDS.defaultAdmin, account], options),
+        ]);
+        const labels = [
+          "FightFactory admin", "FighterRegistry admin", "Gacha admin", "Oracle admin",
+          "RelicNFT minter", "Markets token manager", "RelicNFT admin", "Markets admin",
+        ];
+        const attempts: SourceAttempt[] = [];
+        const warnings: DataWarning[] = [];
+        const values = checks.map((check, index) => {
+          if (check.status === "fulfilled") {
+            attempts.push(...check.value.attempts);
+            return decodeSingleBool(check.value.data, labels[index] ?? "admin capability");
+          }
+          attempts.push(...transportAttemptsFromError(check.reason));
+          warnings.push({
+            code: "ADMIN_CAPABILITY_UNVERIFIED",
+            message: `${labels[index] ?? "Admin capability"} could not be verified.`,
+            source: "starknet-rpc",
+          });
+          return false;
+        });
+        const data: AdminCapabilities = {
+          fightFactory: values[0] ?? false,
+          fighterRegistry: values[1] ?? false,
+          gacha: values[2] ?? false,
+          oracle: values[3] ?? false,
+          relicMinter: values[4] ?? false,
+          marketsTokenManager: values[5] ?? false,
+          relicAdmin: values[6] ?? false,
+          marketsAdmin: values[7] ?? false,
+          isAnyAdmin: values.some(Boolean),
+        };
+        return createDataResult({
+          data,
+          source: "starknet-rpc",
+          complete: checks.every((check) => check.status === "fulfilled"),
+          attempts,
+          warnings,
+          startedAt,
+          now: context.now,
+          ...(context.logger ? { logger: context.logger } : {}),
+        });
+      })();
+      capabilityCache.set(cacheKey, { expiresAt: context.now() + 30_000, value });
+      void value.catch(() => capabilityCache.delete(cacheKey));
+      return value;
+    },
     async isAdmin(contract, account, options = {}) {
       const startedAt = context.now();
       const response = await rpc(contract, "is_admin", [normalizeAddress(account)], options);

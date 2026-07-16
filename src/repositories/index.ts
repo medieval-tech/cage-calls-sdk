@@ -20,6 +20,7 @@ import {
   mapToriiFightWinner,
   mapToriiFighter,
   mapToriiMarket,
+  normalizeFightViewerState,
   scalarBigInt,
   scalarNumber,
 } from "../core/decoders.js";
@@ -485,9 +486,10 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
                 hasBought: false,
                 shares: 0n,
                 boughtAt: 0n,
-                hasRedeemed: false,
-                isWinner: false,
-                strikeTickets: 0n,
+              hasRedeemed: false,
+              isWinner: false,
+              previewStrikeTickets: 0n,
+              strikeTickets: 0n,
               }, []))
             : createFightsRepository(context).viewerState(fightId, viewer, options),
         ]);
@@ -675,15 +677,17 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
       const hasBought = decodeSingleBool(bought.data, "hasBought");
       const choiceIndex = decodeSingleNumber(choice.data, "userChoice");
       const buyData = decodeFightBuyRpc(buy.data);
-      return result(context, startedAt, "starknet-rpc", {
+      const previewStrikeTickets = decodeSingleU256(tickets.data, "strikeTickets");
+      return result(context, startedAt, "starknet-rpc", normalizeFightViewerState({
         hasBought,
         ...(choiceIndex === 255 ? {} : { choiceIndex }),
         shares: hasBought ? buyData.amount : 0n,
         boughtAt: hasBought ? buyData.boughtAt : 0n,
         hasRedeemed: decodeSingleBool(redeemed.data, "hasRedeemed"),
-        isWinner: decodeSingleU256(tickets.data, "strikeTickets") > 0n,
-        strikeTickets: decodeSingleU256(tickets.data, "strikeTickets"),
-      }, [bought, choice, redeemed, tickets, buy].flatMap((value) => value.attempts));
+        isWinner: previewStrikeTickets > 0n,
+        previewStrikeTickets,
+        strikeTickets: previewStrikeTickets,
+      }), [bought, choice, redeemed, tickets, buy].flatMap((value) => value.attempts));
     },
     async potState(fightId, options = {}) {
       const startedAt = context.now();

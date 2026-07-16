@@ -298,7 +298,7 @@ export function createAggregateRepositories(
             ...publicFeed,
             data: {
               ...publicFeed.data,
-              items: publicFeed.data.items.filter((fight) => fight.viewer.hasBought || fight.viewer.strikeTickets > 0n),
+              items: publicFeed.data.items.filter((fight) => fight.viewer.hasBought),
             },
           };
           accountComplete = false;
@@ -325,7 +325,7 @@ export function createAggregateRepositories(
           : Promise.reject(new Error("Account fight feed is unavailable"))).catch(() =>
           dependencies.fights.feedAll({ viewer: account }, options).then((value) => ({
             ...value,
-            data: value.data.filter((fight) => fight.viewer.hasBought || fight.viewer.strikeTickets > 0n),
+            data: value.data.filter((fight) => fight.viewer.hasBought),
           })));
         const reads = await Promise.allSettled([
           accountFeed,

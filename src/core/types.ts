@@ -185,6 +185,9 @@ export interface FightViewerState {
   boughtAt: bigint;
   hasRedeemed: boolean;
   isWinner: boolean;
+  /** Preview of the reward minted by redeem. This is not an ERC-1155 balance. */
+  previewStrikeTickets?: bigint;
+  /** @deprecated Use previewStrikeTickets. This value is not spendable. */
   strikeTickets: bigint;
 }
 
@@ -352,6 +355,55 @@ export interface GachaUserState {
   escrowedTokenId?: bigint;
   strikeNonce: bigint;
   ticketBalance: bigint;
+}
+
+export interface AdminCapabilities {
+  fightFactory: boolean;
+  fighterRegistry: boolean;
+  gacha: boolean;
+  oracle: boolean;
+  relicMinter: boolean;
+  marketsTokenManager: boolean;
+  relicAdmin: boolean;
+  marketsAdmin: boolean;
+  isAnyAdmin: boolean;
+}
+
+export interface ActionEligibility {
+  allowed: boolean;
+  reason?: string;
+}
+
+export interface FightActionEligibility {
+  buy: ActionEligibility;
+  redeem: ActionEligibility;
+  close: ActionEligibility;
+  settle: ActionEligibility;
+}
+
+export interface FightActionEligibilityInput {
+  fight?: FightFeedItem;
+  now?: bigint;
+  connected?: boolean;
+  stateComplete?: boolean;
+  fightFactoryAdmin?: boolean;
+  oracleAdmin?: boolean;
+  oracleWinnerSet?: boolean;
+}
+
+export interface GachaActionEligibility {
+  strike: ActionEligibility;
+  keep: ActionEligibility;
+  openPool: ActionEligibility;
+  closePool: ActionEligibility;
+}
+
+export interface GachaActionEligibilityInput {
+  pool?: GachaPoolState;
+  user?: GachaUserState;
+  connected?: boolean;
+  stateComplete?: boolean;
+  gachaAdmin?: boolean;
 }
 
 export interface GachaFightUserState extends GachaUserState {

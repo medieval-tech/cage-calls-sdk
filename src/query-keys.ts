@@ -3,11 +3,22 @@ import type { AnalyticsSummaryFilter } from "./repositories/analytics-summary.js
 import type { EventRef } from "./repositories/aggregates.js";
 import type { RelicCollectionInput, RelicFeedInput } from "./repositories/relics.js";
 import type { RelicStatsFilter } from "./repositories/relic-stats.js";
-import type { Address, CageCallsQueryKey } from "./core/types.js";
+import type { Address, CageCallsNetwork, CageCallsQueryKey } from "./core/types.js";
 
 const key = (scope: string, ...values: readonly unknown[]): CageCallsQueryKey => ["cage-calls", scope, ...values];
 const bigintList = (values: readonly bigint[] | undefined) => values?.map(String).sort().join(",") ?? "all";
 const stringList = (values: readonly string[] | undefined) => values?.map(String).sort().join(",") ?? "all";
+
+export function cageCallsNetworkScope(network: Pick<CageCallsNetwork, "chainId" | "worldAddress" | "deploymentRevision">): string {
+  return `${network.chainId}:${normalizeAddress(network.worldAddress)}:${network.deploymentRevision}`;
+}
+
+export function scopeCageCallsQueryKey(
+  network: Pick<CageCallsNetwork, "chainId" | "worldAddress" | "deploymentRevision">,
+  queryKey: CageCallsQueryKey,
+): CageCallsQueryKey {
+  return ["cage-calls", cageCallsNetworkScope(network), ...queryKey.slice(1)];
+}
 
 export const cageCallsQueryKeys = Object.freeze({
   all: (): CageCallsQueryKey => ["cage-calls"],

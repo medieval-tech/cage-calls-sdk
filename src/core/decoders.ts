@@ -4,6 +4,7 @@ import type {
   Fight,
   FightBuy,
   FightFeedItem,
+  FightViewerState,
   FightWinner,
   Fighter,
   GachaPoolState,
@@ -255,6 +256,22 @@ export function mapToriiFightWinner(value: Record<string, unknown>): FightWinner
   };
 }
 
+export function normalizeFightViewerState(viewer: FightViewerState): FightViewerState {
+  if (viewer.hasBought) {
+    const previewStrikeTickets = viewer.previewStrikeTickets ?? viewer.strikeTickets;
+    return { ...viewer, previewStrikeTickets, strikeTickets: previewStrikeTickets };
+  }
+  return {
+    hasBought: false,
+    shares: 0n,
+    boughtAt: 0n,
+    hasRedeemed: false,
+    isWinner: false,
+    previewStrikeTickets: 0n,
+    strikeTickets: 0n,
+  };
+}
+
 export function decodeFightFeedRpc(values: readonly string[]): FightFeedItem[] {
   const reader = new CairoReader(values, "FightFeedRow[]");
   const count = reader.number("length");
@@ -332,15 +349,16 @@ export function decodeFightFeedRpc(values: readonly string[]): FightFeedItem[] {
         closed,
         settled,
       },
-      viewer: {
+      viewer: normalizeFightViewerState({
         hasBought,
         ...(viewerChoice === 255 ? {} : { choiceIndex: viewerChoice }),
         shares,
         boughtAt,
         hasRedeemed,
         isWinner,
+        previewStrikeTickets: strikeTickets,
         strikeTickets,
-      },
+      }),
     });
   }
   reader.done();

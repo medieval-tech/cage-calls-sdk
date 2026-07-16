@@ -84,6 +84,14 @@ export interface AccountsRepository {
 }
 
 // @public (undocumented)
+export interface ActionEligibility {
+    // (undocumented)
+    allowed: boolean;
+    // (undocumented)
+    reason?: string;
+}
+
+// @public (undocumented)
 export interface ActivityRepository {
     // (undocumented)
     all(input?: {
@@ -113,7 +121,38 @@ export interface ActivityRepository {
 export type Address = Hex;
 
 // @public (undocumented)
+export const ADMIN_ROLE_IDS: Readonly<{
+    relicMinter: `0x${string}`;
+    marketsTokenManager: `0x${string}`;
+    defaultAdmin: `0x${string}`;
+}>;
+
+// @public (undocumented)
+export interface AdminCapabilities {
+    // (undocumented)
+    fighterRegistry: boolean;
+    // (undocumented)
+    fightFactory: boolean;
+    // (undocumented)
+    gacha: boolean;
+    // (undocumented)
+    isAnyAdmin: boolean;
+    // (undocumented)
+    marketsAdmin: boolean;
+    // (undocumented)
+    marketsTokenManager: boolean;
+    // (undocumented)
+    oracle: boolean;
+    // (undocumented)
+    relicAdmin: boolean;
+    // (undocumented)
+    relicMinter: boolean;
+}
+
+// @public (undocumented)
 export interface AdminRepository {
+    // (undocumented)
+    capabilities(account: Address, options?: RequestOptions): Promise<DataResult<AdminCapabilities>>;
     // (undocumented)
     hasRole(contract: ContractName, role: Felt, account: Address, options?: RequestOptions): Promise<DataResult<boolean>>;
     // (undocumented)
@@ -456,6 +495,9 @@ export interface CageCallsNetwork {
     // (undocumented)
     worldAddress: Address;
 }
+
+// @public (undocumented)
+export function cageCallsNetworkScope(network: Pick<CageCallsNetwork, "chainId" | "worldAddress" | "deploymentRevision">): string;
 
 // @public (undocumented)
 export type CageCallsQueryKey = readonly ["cage-calls", ...readonly unknown[]];
@@ -931,6 +973,12 @@ export type DeploymentClassHashes = Readonly<Record<ContractName, Felt>>;
 export type DeploymentContracts = Readonly<Record<ContractName, Address>>;
 
 // @public (undocumented)
+export function deriveFightActionEligibility(input: FightActionEligibilityInput): FightActionEligibility;
+
+// @public (undocumented)
+export function deriveGachaActionEligibility(input: GachaActionEligibilityInput): GachaActionEligibility;
+
+// @public (undocumented)
 export function encodeByteArray(value: string): string[];
 
 // @public (undocumented)
@@ -995,6 +1043,36 @@ export interface Fight {
     seasonId: bigint;
     // (undocumented)
     sponsor: Felt;
+}
+
+// @public (undocumented)
+export interface FightActionEligibility {
+    // (undocumented)
+    buy: ActionEligibility;
+    // (undocumented)
+    close: ActionEligibility;
+    // (undocumented)
+    redeem: ActionEligibility;
+    // (undocumented)
+    settle: ActionEligibility;
+}
+
+// @public (undocumented)
+export interface FightActionEligibilityInput {
+    // (undocumented)
+    connected?: boolean;
+    // (undocumented)
+    fight?: FightFeedItem;
+    // (undocumented)
+    fightFactoryAdmin?: boolean;
+    // (undocumented)
+    now?: bigint;
+    // (undocumented)
+    oracleAdmin?: boolean;
+    // (undocumented)
+    oracleWinnerSet?: boolean;
+    // (undocumented)
+    stateComplete?: boolean;
 }
 
 // @public (undocumented)
@@ -1225,9 +1303,10 @@ export interface FightViewerState {
     hasRedeemed: boolean;
     // (undocumented)
     isWinner: boolean;
+    previewStrikeTickets?: bigint;
     // (undocumented)
     shares: bigint;
-    // (undocumented)
+    // @deprecated (undocumented)
     strikeTickets: bigint;
 }
 
@@ -1245,6 +1324,32 @@ export interface FightWinner {
 
 // @public (undocumented)
 export function filterRelicCollection(relics: readonly Relic[], filter?: RelicStatsFilter, fighters?: readonly Fighter[]): Relic[];
+
+// @public (undocumented)
+export interface GachaActionEligibility {
+    // (undocumented)
+    closePool: ActionEligibility;
+    // (undocumented)
+    keep: ActionEligibility;
+    // (undocumented)
+    openPool: ActionEligibility;
+    // (undocumented)
+    strike: ActionEligibility;
+}
+
+// @public (undocumented)
+export interface GachaActionEligibilityInput {
+    // (undocumented)
+    connected?: boolean;
+    // (undocumented)
+    gachaAdmin?: boolean;
+    // (undocumented)
+    pool?: GachaPoolState;
+    // (undocumented)
+    stateComplete?: boolean;
+    // (undocumented)
+    user?: GachaUserState;
+}
 
 // @public (undocumented)
 export interface GachaFightUserState extends GachaUserState {
@@ -1694,6 +1799,9 @@ export function normalizeAddress(value: string | number | bigint, label?: string
 
 // @public (undocumented)
 export function normalizeFelt(value: string | number | bigint, label?: string): Felt;
+
+// @public (undocumented)
+export function normalizeFightViewerState(viewer: FightViewerState): FightViewerState;
 
 // @public (undocumented)
 export function normalizeRelicMoveType(value: string): string;
@@ -2214,6 +2322,9 @@ export function scalarNumber(value: unknown, label?: string): number;
 
 // @public (undocumented)
 export function scalarString(value: unknown, label?: string): string;
+
+// @public (undocumented)
+export function scopeCageCallsQueryKey(network: Pick<CageCallsNetwork, "chainId" | "worldAddress" | "deploymentRevision">, queryKey: CageCallsQueryKey): CageCallsQueryKey;
 
 // @public (undocumented)
 export interface SdkLogger {

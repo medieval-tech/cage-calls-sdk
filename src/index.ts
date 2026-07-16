@@ -18,3 +18,4 @@ export * from "./transports/resilience.js";
 export * from "./repositories/index.js";
 export * from "./transports/index.js";
 export * from "./core/types.js";
+export * from "./eligibility.js";

@@ -84,8 +84,19 @@ export function encodeFightFeed(rows: Array<{
   marketId: bigint;
   settled?: boolean;
   winnerIndex?: number;
+  viewer?: {
+    hasBought: boolean;
+    choiceIndex?: number;
+    shares?: bigint;
+    boughtAt?: bigint;
+    hasRedeemed?: boolean;
+    isWinner?: boolean;
+    previewStrikeTickets?: bigint;
+  };
 }>): string[] {
-  return [rows.length.toString(), ...rows.flatMap((row) => [
+  return [rows.length.toString(), ...rows.flatMap((row) => {
+    const viewer = row.viewer;
+    return [
     ...encodeU256(row.fightId), ...encodeU256(1n), ...encodeByteArray("Cage Night"), ...encodeU256(row.marketId),
     ...encodeU256(1n), ...encodeByteArray("A"), ...encodeByteArray("Lightweight"), ...encodeU256(1n), ...encodeByteArray("A"),
     ...encodeU256(2n), ...encodeByteArray("B"), ...encodeByteArray("Lightweight"), ...encodeU256(2n), ...encodeByteArray("B"),
@@ -99,8 +110,12 @@ export function encodeFightFeed(rows: Array<{
     ...encodeU256(0n), ...encodeU256(row.settled ? 1n : 0n),
     "0", row.settled ? "1" : "0", (row.winnerIndex ?? 255).toString(),
     ...encodeU256(row.settled ? 1n : 0n), ...encodeU256(100n), ...encodeU256(0n),
-    "0", "255", ...encodeU256(0n), "0", "0", "0", ...encodeU256(0n),
-  ])];
+    viewer?.hasBought ? "1" : "0", (viewer?.choiceIndex ?? 255).toString(),
+    ...encodeU256(viewer?.shares ?? 0n), (viewer?.boughtAt ?? 0n).toString(),
+    viewer?.hasRedeemed ? "1" : "0", viewer?.isWinner ? "1" : "0",
+    ...encodeU256(viewer?.previewStrikeTickets ?? 0n),
+  ];
+  })];
 }
 
 export const toriiToken = (tokenId: bigint, contractAddress: Address, complete = true) => ({
