@@ -1,4 +1,4 @@
-import type { DataWarning, Fighter, Relic } from "./types.js";
+import type { DataWarning, Fighter, Relic } from "../core/types.js";
 
 export const RELIC_STAT_NAMES = [
   "power",

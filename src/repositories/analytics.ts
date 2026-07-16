@@ -1,17 +1,17 @@
-import { createDataResult, resolveRequestBudget } from "./core.js";
-import { summarizeAnalyticsSnapshot, type AnalyticsSummaryFilter, type CageCallsAnalyticsSummary } from "./analyticsSummary.js";
-import { encodeU256, normalizeAddress } from "./codecs.js";
+import { createDataResult, resolveRequestBudget } from "../core/request.js";
+import { summarizeAnalyticsSnapshot, type AnalyticsSummaryFilter, type CageCallsAnalyticsSummary } from "./analytics-summary.js";
+import { encodeU256, normalizeAddress } from "../core/codecs.js";
 import {
   decodeFightBuysRpc,
   decodeSingleNumber,
   mapToriiFight,
   mapToriiFightBuy,
   mapToriiFightWinner,
-} from "./decoders.js";
-import { AllSourcesFailedError } from "./errors.js";
-import { createFightsRepository, type RepositoryContext } from "./repositories.js";
-import { readAllToriiModels, type ToriiModelRead } from "./torii-models.js";
-import { transportAttemptsFromError } from "./transports.js";
+} from "../core/decoders.js";
+import { AllSourcesFailedError } from "../core/errors.js";
+import { createFightsRepository, type RepositoryContext } from "./index.js";
+import { readAllToriiModels, type ToriiModelRead } from "../transports/torii-models.js";
+import { transportAttemptsFromError } from "../transports/index.js";
 import type {
   AnalyticsSnapshot,
   DataResult,
@@ -21,7 +21,7 @@ import type {
   FightWinner,
   RequestOptions,
   SourceAttempt,
-} from "./types.js";
+} from "../core/types.js";
 
 const FIGHT_SELECTION = [
   "fight_id", "season_id", "event", "market_id", "fighter_a_id", "fighter_a_name",

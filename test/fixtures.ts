@@ -1,5 +1,5 @@
-import { encodeByteArray, encodeShortString, encodeU256 } from "../src/codecs.js";
-import type { Address, RelicMetadata } from "../src/types.js";
+import { encodeByteArray, encodeShortString, encodeU256 } from "../src/core/codecs.js";
+import type { Address, RelicMetadata } from "../src/core/types.js";
 
 export const metadataFixture = (tokenId = 1n): RelicMetadata => ({
   definitionId: tokenId,

@@ -1,7 +1,7 @@
-import { errorCode, withTimeout } from "./core.js";
-import { normalizeAddress, normalizeFelt, redactUrl, selectorFromName } from "./codecs.js";
-import { ConfigurationError, TransportError, ValidationError } from "./errors.js";
-import type { Address, DataSource, Felt, RequestOptions, SdkLogger, SourceAttempt } from "./types.js";
+import { errorCode, withTimeout } from "../core/request.js";
+import { normalizeAddress, normalizeFelt, redactUrl, selectorFromName } from "../core/codecs.js";
+import { ConfigurationError, TransportError, ValidationError } from "../core/errors.js";
+import type { Address, DataSource, Felt, RequestOptions, SdkLogger, SourceAttempt } from "../core/types.js";
 
 export interface TransportResult<T> {
   data: T;

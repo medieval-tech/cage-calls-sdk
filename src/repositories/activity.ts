@@ -1,8 +1,8 @@
-import { createDataResult, resolveRequestBudget } from "./core.js";
-import { normalizeAddress, normalizeFelt, selectorFromName } from "./codecs.js";
-import { AllSourcesFailedError, UnsupportedCapabilityError } from "./errors.js";
-import type { RepositoryContext } from "./repositories.js";
-import { transportAttemptsFromError } from "./transports.js";
+import { createDataResult, resolveRequestBudget } from "../core/request.js";
+import { normalizeAddress, normalizeFelt, selectorFromName } from "../core/codecs.js";
+import { AllSourcesFailedError, UnsupportedCapabilityError } from "../core/errors.js";
+import type { RepositoryContext } from "./index.js";
+import { transportAttemptsFromError } from "../transports/index.js";
 import type {
   CageCallsActivity,
   DataResult,
@@ -11,7 +11,7 @@ import type {
   RequestOptions,
   DataWarning,
   SourceAttempt,
-} from "./types.js";
+} from "../core/types.js";
 
 const EVENT_TYPES = new Map<string, { name: string; type: CageCallsActivity["type"]; action?: "preparation" | "resolution" | "split" | "merge" | "redemption" }>([
   [selectorFromName("FightCreated"), { name: "FightCreated", type: "fight-created" }],

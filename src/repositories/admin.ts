@@ -1,10 +1,10 @@
-import { createDataResult } from "./core.js";
-import { normalizeAddress, normalizeFelt } from "./codecs.js";
-import { decodeSingleBool, decodeSingleU256, scalarBoolean, scalarNumber, scalarString } from "./decoders.js";
-import { AllSourcesFailedError, UnsupportedCapabilityError, ValidationError } from "./errors.js";
-import type { RepositoryContext } from "./repositories.js";
-import { readAllToriiModels } from "./torii-models.js";
-import { transportAttemptsFromError } from "./transports.js";
+import { createDataResult } from "../core/request.js";
+import { normalizeAddress, normalizeFelt } from "../core/codecs.js";
+import { decodeSingleBool, decodeSingleU256, scalarBoolean, scalarNumber, scalarString } from "../core/decoders.js";
+import { AllSourcesFailedError, UnsupportedCapabilityError, ValidationError } from "../core/errors.js";
+import type { RepositoryContext } from "./index.js";
+import { readAllToriiModels } from "../transports/torii-models.js";
+import { transportAttemptsFromError } from "../transports/index.js";
 import type {
   Address,
   ContractName,
@@ -16,7 +16,7 @@ import type {
   RequestOptions,
   RoleMembership,
   SourceAttempt,
-} from "./types.js";
+} from "../core/types.js";
 
 const ROLE_MODELS = {
   FightFactory: "FightFactoryAdmin",

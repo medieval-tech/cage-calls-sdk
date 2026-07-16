@@ -12,7 +12,7 @@ import {
   type RepositoryContext,
   type TokensRepository,
 } from "../src/index.js";
-import { createMockRpcTransport } from "../src/testing.js";
+import { createMockRpcTransport } from "../src/testing/index.js";
 
 const result = <T,>(data: T): DataResult<T> => ({
   data,

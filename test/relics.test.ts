@@ -5,7 +5,7 @@ import {
   createMockMetadataTransport,
   createMockRpcTransport,
   createMockToriiTransport,
-} from "../src/testing.js";
+} from "../src/testing/index.js";
 import { encodeOwnedPage, encodeRelicRows, toriiToken } from "./fixtures.js";
 
 const owner = "0x123" as const;

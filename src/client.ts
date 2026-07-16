@@ -1,9 +1,9 @@
-import { createActivityRepository, type ActivityRepository } from "./activity.js";
-import { createAggregateRepositories, type AccountsRepository, type EventsRepository } from "./aggregates.js";
-import { createAdminRepository, type AdminRepository } from "./admin.js";
-import { createAnalyticsRepository, type AnalyticsRepository } from "./analytics.js";
-import { resolveBudget } from "./core.js";
-import { ConfigurationError } from "./errors.js";
+import { createActivityRepository, type ActivityRepository } from "./repositories/activity.js";
+import { createAggregateRepositories, type AccountsRepository, type EventsRepository } from "./repositories/aggregates.js";
+import { createAdminRepository, type AdminRepository } from "./repositories/admin.js";
+import { createAnalyticsRepository, type AnalyticsRepository } from "./repositories/analytics.js";
+import { resolveBudget } from "./core/request.js";
+import { ConfigurationError } from "./core/errors.js";
 import { createCapabilityRegistry, resolveNetwork, type CapabilityRegistry } from "./network.js";
 import {
   createFightEventsRepository,
@@ -19,8 +19,8 @@ import {
   type MarketsRepository,
   type RepositoryContext,
   type TokensRepository,
-} from "./repositories.js";
-import { createRelicsRepository, type RelicsRepository } from "./relics.js";
+} from "./repositories/index.js";
+import { createRelicsRepository, type RelicsRepository } from "./repositories/relics.js";
 import {
   createResilientMetadataTransport,
   createResilientRpcTransport,
@@ -29,10 +29,10 @@ import {
   type PassiveCircuitOptions,
   type SourceStatusRegistry,
   type SourceStatus,
-} from "./resilience.js";
-import { createLiveRepository, type CageCallsLiveTransport, type LiveRepository } from "./live.js";
-import type { MetadataTransport, RpcTransport, ToriiTransport } from "./transports.js";
-import type { CageCallsNetwork, NetworkName, RequestBudget, SdkLogger } from "./types.js";
+} from "./transports/resilience.js";
+import { createLiveRepository, type CageCallsLiveTransport, type LiveRepository } from "./repositories/live.js";
+import type { MetadataTransport, RpcTransport, ToriiTransport } from "./transports/index.js";
+import type { CageCallsNetwork, NetworkName, RequestBudget, SdkLogger } from "./core/types.js";
 
 export interface CageCallsTransports {
   rpc: RpcTransport;

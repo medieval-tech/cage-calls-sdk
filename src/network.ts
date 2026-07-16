@@ -1,5 +1,5 @@
-import { normalizeAddress, normalizeFelt } from "./codecs.js";
-import { ConfigurationError, ValidationError } from "./errors.js";
+import { normalizeAddress, normalizeFelt } from "./core/codecs.js";
+import { ConfigurationError, ValidationError } from "./core/errors.js";
 import { NETWORK_PRESETS } from "./generated/deployments.js";
 import type {
   CageCallsNetwork,
@@ -9,8 +9,8 @@ import type {
   DeploymentClassHashes,
   DeploymentContracts,
   NetworkName,
-} from "./types.js";
-import type { RpcTransport } from "./transports.js";
+} from "./core/types.js";
+import type { RpcTransport } from "./transports/index.js";
 
 const CONTRACT_NAMES: readonly ContractName[] = [
   "CALLS",

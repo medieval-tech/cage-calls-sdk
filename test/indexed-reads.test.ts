@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createCageCallsClient, encodeByteArray, encodeU256, SEPOLIA_DEV_PRESET } from "../src/index.js";
-import { createMockRpcTransport, createMockToriiTransport } from "../src/testing.js";
+import { createMockRpcTransport, createMockToriiTransport } from "../src/testing/index.js";
 import { encodeFightBuys, encodeFightFeed } from "./fixtures.js";
 
 const fight = {

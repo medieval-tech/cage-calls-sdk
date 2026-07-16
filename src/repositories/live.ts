@@ -1,6 +1,6 @@
-import { normalizeAddress } from "./codecs.js";
+import { normalizeAddress } from "../core/codecs.js";
 import type { EventRef } from "./aggregates.js";
-import type { Address, CageCallsActivity } from "./types.js";
+import type { Address, CageCallsActivity } from "../core/types.js";
 
 export type CageCallsLiveUpdate =
   | { kind: "activity"; activity: CageCallsActivity }

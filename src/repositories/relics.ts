@@ -1,20 +1,20 @@
-import { createDataResult, mapConcurrent, resolveRequestBudget } from "./core.js";
-import { clampPageSize, encodeU256, normalizeAddress, sameAddress } from "./codecs.js";
+import { createDataResult, mapConcurrent, resolveRequestBudget } from "../core/request.js";
+import { clampPageSize, encodeU256, normalizeAddress, sameAddress } from "../core/codecs.js";
 import {
   decodeByteArrayRpc,
   decodeOwnedRelicPageRpc,
   decodeRelicDataRpc,
   decodeRelicRowsRpc,
   decodeSingleU256,
-} from "./decoders.js";
-import { AllSourcesFailedError, TransportError, UnsupportedCapabilityError, ValidationError } from "./errors.js";
-import { createFightersRepository, type RepositoryContext } from "./repositories.js";
-import { summarizeRelicCollection, type RelicCollectionStats, type RelicStatsFilter } from "./relicStats.js";
+} from "../core/decoders.js";
+import { AllSourcesFailedError, TransportError, UnsupportedCapabilityError, ValidationError } from "../core/errors.js";
+import { createFightersRepository, type RepositoryContext } from "./index.js";
+import { summarizeRelicCollection, type RelicCollectionStats, type RelicStatsFilter } from "./relic-stats.js";
 import type {
   MetadataTransport,
   ToriiTokenNode,
-} from "./transports.js";
-import { transportAttemptsFromError } from "./transports.js";
+} from "../transports/index.js";
+import { transportAttemptsFromError } from "../transports/index.js";
 import type {
   Address,
   DataResult,
@@ -27,7 +27,7 @@ import type {
   RelicOwnershipProvenance,
   RequestOptions,
   SourceAttempt,
-} from "./types.js";
+} from "../core/types.js";
 
 interface RelicContext extends RepositoryContext {
   metadata?: MetadataTransport;

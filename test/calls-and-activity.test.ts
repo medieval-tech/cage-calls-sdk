@@ -14,7 +14,7 @@ import {
   type RequestOptions,
   type ToriiModelRequest,
 } from "../src/index.js";
-import { createMockRpcTransport, createMockToriiTransport } from "../src/testing.js";
+import { createMockRpcTransport, createMockToriiTransport } from "../src/testing/index.js";
 
 const fight = (seasonId: bigint, fightId: bigint): FightFeedItem => ({
   fightId,

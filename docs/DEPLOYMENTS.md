@@ -1,0 +1,28 @@
+# Deployment presets
+
+Built-in presets are available for `mainnet`, `sepolia-dev`, and `sepolia-staging`. Each preset
+contains the chain, world, contract and class addresses, Torii URL, Cartridge fallback RPC, VRF
+address, deployment revision, and capability flags.
+
+Presets are generated from `deployment-inputs/deployments.json`. Each input pins the upstream
+smart-contract commit and manifest hash. After an additive contract migration:
+
+1. Update the matching deployment input from the authoritative manifest.
+2. Set capability flags only for views confirmed live on that deployment.
+3. Run `pnpm generate`.
+4. Run `pnpm check` and the relevant live parity checks.
+
+CI runs `pnpm generate:check` and rejects stale generated artifacts.
+
+## Custom deployments
+
+Pass a complete `CageCallsNetwork` object instead of a preset for Katana or an unreleased world.
+Validation requires the chain ID, world and contract addresses, class hashes, Torii and Cartridge
+URLs, VRF address, deployment revision, and all capability flags. The validated network is
+immutable and does not modify package globals.
+
+## Torii operations
+
+Torii must index the contract addresses belonging to the same manifest as the selected preset.
+Re-run the RelicNFT parity check after a deployment, configuration change, or reindex. See
+[TORII_RELIC_RECOVERY.md](TORII_RELIC_RECOVERY.md) for the recovery procedure.

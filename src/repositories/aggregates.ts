@@ -1,8 +1,8 @@
-import { createDataResult, mapConcurrent } from "./core.js";
-import { normalizeAddress } from "./codecs.js";
-import type { FightsRepository, GachaRepository, RepositoryContext, TokensRepository } from "./repositories.js";
+import { createDataResult, mapConcurrent } from "../core/request.js";
+import { normalizeAddress } from "../core/codecs.js";
+import type { FightsRepository, GachaRepository, RepositoryContext, TokensRepository } from "./index.js";
 import type { RelicsRepository } from "./relics.js";
-import { transportAttemptsFromError } from "./transports.js";
+import { transportAttemptsFromError } from "../transports/index.js";
 import type {
   Address,
   DataResult,
@@ -14,7 +14,7 @@ import type {
   Relic,
   RequestOptions,
   SourceAttempt,
-} from "./types.js";
+} from "../core/types.js";
 
 export interface EventRef {
   seasonId: bigint;

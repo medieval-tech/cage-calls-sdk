@@ -1,5 +1,5 @@
-import { errorCode } from "./core.js";
-import { TransportError } from "./errors.js";
+import { errorCode } from "../core/request.js";
+import { TransportError } from "../core/errors.js";
 import type {
   MetadataTransport,
   RpcCall,
@@ -7,8 +7,8 @@ import type {
   ToriiModelRequest,
   ToriiTransport,
   TransportResult,
-} from "./transports.js";
-import type { RequestOptions } from "./types.js";
+} from "./index.js";
+import type { RequestOptions } from "../core/types.js";
 
 export type RuntimeSource = "rpc" | "torii" | "metadata";
 export type CircuitState = "closed" | "open" | "half-open";

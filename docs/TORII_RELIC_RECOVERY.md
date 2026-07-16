@@ -1,5 +1,9 @@
 # RelicNFT Torii recovery
 
+This procedure applies when the SDK reports an incomplete relic inventory or the indexed count
+does not match authoritative onchain supply. Read [DEPLOYMENTS.md](DEPLOYMENTS.md) before changing
+an indexed contract address.
+
 Run the parity check before and after every Torii deployment or reindex:
 
 ```sh

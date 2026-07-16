@@ -1,5 +1,5 @@
-import { createCageCallsClient, type CageCallsClient, type CreateCageCallsClientOptions } from "./client.js";
-import { MAINNET_PRESET } from "./network.js";
+import { createCageCallsClient, type CageCallsClient, type CreateCageCallsClientOptions } from "../client.js";
+import { MAINNET_PRESET } from "../network.js";
 import type {
   MetadataTransport,
   RpcCall,
@@ -11,8 +11,8 @@ import type {
   ToriiTokenConnection,
   ToriiTransport,
   TransportResult,
-} from "./transports.js";
-import type { Address, Felt, RequestOptions, SourceAttempt } from "./types.js";
+} from "../transports/index.js";
+import type { Address, Felt, RequestOptions, SourceAttempt } from "../core/types.js";
 
 const ok = <T>(data: T, source: SourceAttempt["source"], operation: string): TransportResult<T> => ({
   data,

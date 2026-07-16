@@ -1,5 +1,5 @@
-import { normalizeAddress } from "./codecs.js";
-import type { Address, AnalyticsSnapshot, Fight, FightBuy } from "./types.js";
+import { normalizeAddress } from "../core/codecs.js";
+import type { Address, AnalyticsSnapshot, Fight, FightBuy } from "../core/types.js";
 
 export interface AnalyticsSummaryFilter {
   from?: bigint;

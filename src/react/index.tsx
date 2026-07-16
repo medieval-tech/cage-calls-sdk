@@ -1,14 +1,14 @@
 import { createContext, createElement, useContext, useEffect, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient, type UseQueryOptions } from "@tanstack/react-query";
 
-import type { CageCallsClient } from "./client.js";
-import type { AccountEventState, AccountPortfolio, EventRef, PublicEventSnapshot } from "./aggregates.js";
-import type { AnalyticsSummaryFilter, CageCallsAnalyticsSummary } from "./analyticsSummary.js";
-import { normalizeAddress } from "./codecs.js";
-import { cageCallsQueryKeys as keys } from "./queryKeys.js";
-import type { CageCallsLiveUpdate, LiveConnectionStatus, LiveFilter } from "./live.js";
-import type { OwnedRelicsPage, RelicCollection, RelicCollectionInput, RelicFeedInput } from "./relics.js";
-import type { RelicCollectionStats, RelicStatsFilter } from "./relicStats.js";
+import type { CageCallsClient } from "../client.js";
+import type { AccountEventState, AccountPortfolio, EventRef, PublicEventSnapshot } from "../repositories/aggregates.js";
+import type { AnalyticsSummaryFilter, CageCallsAnalyticsSummary } from "../repositories/analytics-summary.js";
+import { normalizeAddress } from "../core/codecs.js";
+import { cageCallsQueryKeys as keys } from "../query-keys.js";
+import type { CageCallsLiveUpdate, LiveConnectionStatus, LiveFilter } from "../repositories/live.js";
+import type { OwnedRelicsPage, RelicCollection, RelicCollectionInput, RelicFeedInput } from "../repositories/relics.js";
+import type { RelicCollectionStats, RelicStatsFilter } from "../repositories/relic-stats.js";
 import type {
   Address,
   AnalyticsSnapshot,
@@ -34,7 +34,7 @@ import type {
   RegisteredAsset,
   Relic,
   RoleMembership,
-} from "./types.js";
+} from "../core/types.js";
 
 const CageCallsContext = createContext<CageCallsClient | undefined>(undefined);
 
@@ -368,4 +368,4 @@ export function useCageCallsLive(
   return client.live.available;
 }
 
-export { cageCallsQueryKeys } from "./queryKeys.js";
+export { cageCallsQueryKeys } from "../query-keys.js";

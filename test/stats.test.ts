@@ -11,7 +11,7 @@ import {
   type Fight,
   type Relic,
 } from "../src/index.js";
-import { createMockRpcTransport } from "../src/testing.js";
+import { createMockRpcTransport } from "../src/testing/index.js";
 import { encodeRelicRows, metadataFixture } from "./fixtures.js";
 
 const owner = "0x123" as Address;

@@ -1,9 +1,9 @@
-import { normalizeAddress } from "./codecs.js";
-import type { AnalyticsSummaryFilter } from "./analyticsSummary.js";
-import type { EventRef } from "./aggregates.js";
-import type { RelicCollectionInput, RelicFeedInput } from "./relics.js";
-import type { RelicStatsFilter } from "./relicStats.js";
-import type { Address, CageCallsQueryKey } from "./types.js";
+import { normalizeAddress } from "./core/codecs.js";
+import type { AnalyticsSummaryFilter } from "./repositories/analytics-summary.js";
+import type { EventRef } from "./repositories/aggregates.js";
+import type { RelicCollectionInput, RelicFeedInput } from "./repositories/relics.js";
+import type { RelicStatsFilter } from "./repositories/relic-stats.js";
+import type { Address, CageCallsQueryKey } from "./core/types.js";
 
 const key = (scope: string, ...values: readonly unknown[]): CageCallsQueryKey => ["cage-calls", scope, ...values];
 const bigintList = (values: readonly bigint[] | undefined) => values?.map(String).sort().join(",") ?? "all";
