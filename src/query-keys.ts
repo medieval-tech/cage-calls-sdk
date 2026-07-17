@@ -58,3 +58,16 @@ export const cageCallsQueryKeys = Object.freeze({
   analyticsSummary: (filter?: AnalyticsSummaryFilter) => key("analytics", "summary", filter?.from?.toString() ?? "start", filter?.to?.toString() ?? "end", bigintList(filter?.fightIds), bigintList(filter?.marketIds), stringList(filter?.eventNames), stringList(filter?.buyers), filter?.productionOnly ?? false),
   admin: (detail = "all") => key("admin", detail),
 });
+
+export function createScopedCageCallsQueryKeys(
+  network: Pick<CageCallsNetwork, "chainId" | "worldAddress" | "deploymentRevision">,
+): typeof cageCallsQueryKeys {
+  const entries = Object.entries(cageCallsQueryKeys).map(([name, factory]) => [
+    name,
+    (...args: unknown[]) => scopeCageCallsQueryKey(
+      network,
+      (factory as (...values: unknown[]) => CageCallsQueryKey)(...args),
+    ),
+  ]);
+  return Object.freeze(Object.fromEntries(entries)) as typeof cageCallsQueryKeys;
+}

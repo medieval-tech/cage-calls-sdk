@@ -4,6 +4,7 @@ import {
   MAINNET_PRESET,
   SEPOLIA_DEV_PRESET,
   cageCallsQueryKeys,
+  createScopedCageCallsQueryKeys,
   createCageCallsClient,
   decodeFightFeedRpc,
   deriveFightActionEligibility,
@@ -120,5 +121,17 @@ describe("admin capabilities and query scope", () => {
     const sepolia = scopeCageCallsQueryKey(SEPOLIA_DEV_PRESET, base);
     expect(mainnet).not.toEqual(sepolia);
     expect(mainnet).toContain("0xabc");
+  });
+
+  it("creates callable scoped keys from the frozen key registry", () => {
+    expect(Object.isFrozen(cageCallsQueryKeys)).toBe(true);
+    const keys = createScopedCageCallsQueryKeys(MAINNET_PRESET);
+    expect(keys.admin("capabilities:0xabc")).toEqual([
+      "cage-calls",
+      `${MAINNET_PRESET.chainId}:${MAINNET_PRESET.worldAddress}:${MAINNET_PRESET.deploymentRevision}`,
+      "admin",
+      "capabilities:0xabc",
+    ]);
+    expect(keys.gachaUser(1n, "0xabc")).toContain("0xabc");
   });
 });

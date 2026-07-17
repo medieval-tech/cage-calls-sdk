@@ -5,7 +5,7 @@ import type { CageCallsClient } from "../client.js";
 import type { AccountEventState, AccountFightStatePage, AccountPortfolio, EventRef, PublicEventSnapshot } from "../repositories/aggregates.js";
 import type { AnalyticsSummaryFilter, CageCallsAnalyticsSummary } from "../repositories/analytics-summary.js";
 import { normalizeAddress } from "../core/codecs.js";
-import { cageCallsQueryKeys as baseKeys, scopeCageCallsQueryKey } from "../query-keys.js";
+import { cageCallsQueryKeys as baseKeys, createScopedCageCallsQueryKeys } from "../query-keys.js";
 import type { CageCallsLiveUpdate, LiveConnectionStatus, LiveFilter } from "../repositories/live.js";
 import type { OwnedRelicsPage, RelicCollection, RelicCollectionInput, RelicFeedInput } from "../repositories/relics.js";
 import type { RelicCollectionStats, RelicStatsFilter } from "../repositories/relic-stats.js";
@@ -45,16 +45,7 @@ const scopedKeysCache = new WeakMap<object, typeof baseKeys>();
 function queryKeysFor(client: CageCallsClient): typeof baseKeys {
   const cached = scopedKeysCache.get(client.network);
   if (cached) return cached;
-  const scoped = new Proxy(baseKeys, {
-    get(target, property, receiver) {
-      const value = Reflect.get(target, property, receiver) as unknown;
-      if (typeof value !== "function") return value;
-      return (...args: unknown[]) => scopeCageCallsQueryKey(
-        client.network,
-        (value as (...values: unknown[]) => ReturnType<typeof baseKeys.all>)(...args),
-      );
-    },
-  });
+  const scoped = createScopedCageCallsQueryKeys(client.network);
   scopedKeysCache.set(client.network, scoped);
   return scoped;
 }

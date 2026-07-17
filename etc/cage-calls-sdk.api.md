@@ -803,6 +803,9 @@ export function createRpcPoolTransport(options: {
 }): RpcTransport;
 
 // @public (undocumented)
+export function createScopedCageCallsQueryKeys(network: Pick<CageCallsNetwork, "chainId" | "worldAddress" | "deploymentRevision">): typeof cageCallsQueryKeys;
+
+// @public (undocumented)
 export function createSourceStatusRegistry(): SourceStatusRegistry & {
     update(source: RuntimeSource, update: Partial<SourceStatus>): void;
 };
