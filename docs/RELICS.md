@@ -5,16 +5,17 @@ not spend RPC or IPFS capacity on information they do not need.
 
 ## Choosing a read
 
-- `relics.inventory()` traverses collection rows for analytics, exports, and counts. It fills
-  incomplete indexed data with aggregate RPC reads and never fetches external token JSON.
-- `relics.ownedInventory(owner)` provides the same behavior for one owner.
+- `relics.inventory()` traverses indexed collection rows for analytics, exports, and counts without
+  fetching external token JSON or hydrating every relic through RPC.
+- `relics.ownedInventory(owner)` provides the same Torii-first inventory behavior for one owner.
 - `relics.collection()` returns display-ready collection data and selectively hydrates incomplete
   external metadata through the configured IPFS gateways.
-- `relics.owned(owner)` is the display-oriented owned collection equivalent.
+- `relics.owned(owner)` is the display-oriented owned collection equivalent. It keeps Torii as the
+  ownership source and batch-hydrates only owned token IDs whose indexed media metadata is incomplete.
 - `relics.feed()` and paginated methods are intended for bounded surfaces.
 
-Torii is queried first. Complete indexed rows are accepted directly. RPC verifies ownership and
-reconstructs missing data when the deployment advertises the required additive views.
+Torii is queried first. Complete indexed rows are accepted directly. Display-oriented owned reads
+use bounded RPC hydration only for incomplete owned rows; analytics inventory reads do not.
 
 ```ts
 const inventory = await client.relics.inventory({ pageSize: 200 });

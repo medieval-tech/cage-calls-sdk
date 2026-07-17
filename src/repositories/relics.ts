@@ -419,6 +419,82 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     return toResult(context, startedAt, "starknet-rpc", relics, attempts, structured.meta.complete && relics.every(metadataComplete), warnings);
   };
 
+  async function hydrateOwnedToriiRelics(
+    relics: readonly Relic[],
+    attempts: SourceAttempt[],
+    warnings: DataWarning[],
+    options: RequestOptions,
+  ): Promise<Relic[]> {
+    const incompleteIds = relics
+      .filter((relic) => !metadataComplete(relic))
+      .map((relic) => relic.tokenId);
+    if (incompleteIds.length === 0) return [...relics];
+
+    const hydrateSingleton = async (relic: Relic): Promise<Relic> => {
+      try {
+        const id = encodeU256(relic.tokenId);
+        const [data, tokenUri] = await Promise.all([
+          rpcCall(context, "relic_data", id, options),
+          rpcCall(context, "get_token_uri", id, options),
+        ]);
+        attempts.push(...data.attempts, ...tokenUri.attempts);
+        const relicData = decodeRelicDataRpc(data.data);
+        const structured = mergeRelic(relic, {
+          tokenId: relic.tokenId,
+          ...relicData,
+          tokenUri: decodeByteArrayRpc(tokenUri.data, "relicTokenUri"),
+          name: (relic.name ?? relicData.metadata.moveName) || `Relic #${relic.tokenId}`,
+          attributes: [],
+          metadataSources: ["starknet-rpc"],
+        });
+        return hydrateJson(context, structured, attempts, warnings, options);
+      } catch (error) {
+        attempts.push(...transportAttemptsFromError(error));
+        warnings.push({
+          code: "OWNED_RELIC_HYDRATION_FAILED",
+          message: `Owned relic ${relic.tokenId} could not be hydrated from RelicNFT.`,
+          source: "starknet-rpc",
+        });
+        return relic;
+      }
+    };
+
+    try {
+      const supportsBatch = context.capabilities.has("relicBatch")
+        || await context.capabilities.probe("relicBatch", options.signal);
+      if (supportsBatch) {
+        const response = await getMany(incompleteIds, options);
+        attempts.push(...response.meta.attempts);
+        warnings.push(...response.meta.warnings);
+        const hydrated = new Map(response.data.map((relic) => [relic.tokenId.toString(), relic]));
+        const merged = relics.map((relic) => {
+          const rpcRelic = hydrated.get(relic.tokenId.toString());
+          return rpcRelic ? mergeRelic(relic, rpcRelic) : relic;
+        });
+        return mapConcurrent(
+          merged,
+          resolveRequestBudget(context.budget, options).maxConcurrency,
+          (relic) => metadataComplete(relic) || hydrated.has(relic.tokenId.toString())
+            ? Promise.resolve(relic)
+            : hydrateSingleton(relic),
+        );
+      }
+    } catch (error) {
+      attempts.push(...transportAttemptsFromError(error));
+      warnings.push({
+        code: "OWNED_RELIC_BATCH_HYDRATION_FAILED",
+        message: "Owned relic batch hydration failed; incomplete rows were retried individually.",
+        source: "starknet-rpc",
+      });
+    }
+
+    return mapConcurrent(
+      relics,
+      resolveRequestBudget(context.budget, options).maxConcurrency,
+      (relic) => metadataComplete(relic) ? Promise.resolve(relic) : hydrateSingleton(relic),
+    );
+  }
+
   async function toriiOwned(
     owner: Address,
     attempts: SourceAttempt[],
@@ -782,17 +858,13 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       try {
         toriiInventory = await toriiOwned(owner, attempts, warnings, options);
         const torii = hydrateExternal
-          ? await mapConcurrent(
-              toriiInventory.relics,
-              resolveRequestBudget(context.budget, options).maxConcurrency,
-              (relic) => hydrateJson(context, relic, attempts, warnings, options),
-            )
+          ? await hydrateOwnedToriiRelics(toriiInventory.relics, attempts, warnings, options)
           : toriiInventory.relics;
         const metadataVerified = !hydrateExternal || torii.every(metadataComplete);
         if (!metadataVerified) {
           warnings.push({
             code: "TORII_METADATA_INCOMPLETE",
-            message: "Torii returned one or more owned relics without complete media metadata.",
+            message: "One or more owned relics remain without complete media metadata after bounded hydration.",
             source: "torii",
           });
         }
