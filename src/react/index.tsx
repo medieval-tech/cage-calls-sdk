@@ -338,7 +338,7 @@ export function useRelicOwner(tokenId: bigint, options?: Options<DataResult<Addr
 export function useGachaPool(fightId: bigint, options?: Options<DataResult<GachaPoolState>>) {
   const client = useCageCallsClient();
   const keys = queryKeysFor(client);
-  return useQuery({ queryKey: keys.gacha(fightId), queryFn: ({ signal }) => client.gacha.pool(fightId, { signal }), refetchOnWindowFocus: false, ...options });
+  return useQuery({ queryKey: keys.gacha(fightId), queryFn: ({ signal }) => client.gacha.pool(fightId, { signal }), staleTime: 30_000, refetchOnWindowFocus: false, ...options });
 }
 
 export function useGachaPoolStates(fightIds: readonly bigint[], options?: Options<DataResult<GachaPoolState[]>>) {

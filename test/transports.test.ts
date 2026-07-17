@@ -5,6 +5,8 @@ import {
   createFallbackRpcTransport,
   createHttpRpcTransport,
   createIpfsMetadataTransport,
+  createResilientRpcTransport,
+  createSourceStatusRegistry,
   createToriiGraphqlTransport,
   TransportError,
   type RpcTransport,
@@ -95,6 +97,85 @@ describe("RPC transports", () => {
       "Cage Calls RPC fallback selected.",
       expect.anything(),
     );
+  });
+
+  it("executes calls in one JSON-RPC batch and restores input ordering", async () => {
+    const bodies: unknown[] = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Array<{ id: number }>;
+      bodies.push(body);
+      return json([...body].reverse().map((request) => ({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: [String(request.id)],
+      })));
+    });
+    const rpc = createHttpRpcTransport({ url: "https://rpc.example", fetch });
+
+    const response = await rpc.callMany!([
+      { contractAddress: "0x1", entrypoint: "pool_open", calldata: [74n, 0n] },
+      { contractAddress: "0x1", entrypoint: "pool_size", calldata: [74n, 0n] },
+    ]);
+
+    expect(response.data).toEqual([["1"], ["2"]]);
+    expect(response.attempts).toMatchObject([{ operation: "starknet_call_batch", ok: true }]);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(bodies[0]).toMatchObject([
+      { method: "starknet_call", params: [expect.objectContaining({ calldata: ["0x4a", "0x0"] }), "latest"] },
+      { method: "starknet_call", params: [expect.objectContaining({ calldata: ["0x4a", "0x0"] }), "latest"] },
+    ]);
+  });
+
+  it("rejects malformed batch responses instead of returning partial values", async () => {
+    const rpc = createHttpRpcTransport({
+      url: "https://rpc.example",
+      fetch: vi.fn(async (_input, init) => {
+        const body = JSON.parse(String(init?.body)) as Array<{ id: number }>;
+        return json([{ jsonrpc: "2.0", id: body[0]?.id, result: ["1"] }]);
+      }),
+    });
+
+    await expect(rpc.callMany!([
+      { contractAddress: "0x1", entrypoint: "pool_open" },
+      { contractAddress: "0x1", entrypoint: "pool_size" },
+    ])).rejects.toBeInstanceOf(TransportError);
+  });
+
+  it("does not duplicate deterministic batch errors on the fallback RPC", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Array<{ id: number }>;
+      return json(body.map((request) => ({
+        jsonrpc: "2.0",
+        id: request.id,
+        error: { code: 21, message: "Contract error" },
+      })));
+    });
+    const rpc = createFallbackRpcTransport({
+      primaryUrl: "https://primary.example",
+      fallbackUrl: "https://fallback.example",
+      fetch,
+      maxRetries: 0,
+    });
+
+    await expect(rpc.callMany!([{ contractAddress: "0x1", entrypoint: "missing_view" }]))
+      .rejects.toMatchObject({ rpcCode: 21 });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("coalesces identical resilient RPC batches", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Array<{ id: number }>;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return json(body.map((request) => ({ jsonrpc: "2.0", id: request.id, result: ["1"] })));
+    });
+    const transport = createHttpRpcTransport({ url: "https://rpc.example", fetch });
+    const rpc = createResilientRpcTransport(transport, createSourceStatusRegistry());
+    const calls = [{ contractAddress: "0x1" as const, entrypoint: "pool_open", calldata: [74n, 0n] }];
+
+    const [first, second] = await Promise.all([rpc.callMany!(calls), rpc.callMany!(calls)]);
+
+    expect(first.data).toEqual(second.data);
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it("keeps an overloaded primary on cooldown across subsequent requests", async () => {

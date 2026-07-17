@@ -2323,6 +2323,7 @@ export interface RpcPoolEndpoint {
 export interface RpcTransport {
     // (undocumented)
     call(input: RpcCall, options?: RequestOptions): Promise<TransportResult<string[]>>;
+    callMany?(inputs: readonly RpcCall[], options?: RequestOptions): Promise<TransportResult<string[][]>>;
     // (undocumented)
     getClassHashAt(address: Address, options?: RequestOptions): Promise<TransportResult<Felt>>;
     // (undocumented)

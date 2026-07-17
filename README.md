@@ -83,6 +83,8 @@ The client exposes `fighters`, `fights`, `fightEvents`, `events`, `accounts`, `m
 - Exhaustive reads have configurable safety budgets rather than arbitrary result caps.
 - Concurrent identical work is coalesced; the core SDK does not retain completed-result caches.
 - Known fight IDs, Gacha pools, and account-relevant fight state use bounded contract batches.
+- Legacy Gacha deployments reconstruct one selected pool's complete rarity counters in one JSON-RPC
+  HTTP batch; a failed batch retains only verified open/size state instead of starting an RPC fan-out.
 - `client.capabilities.diagnostics()` reports preset, override, and runtime-probe provenance.
 
 ## Entry points

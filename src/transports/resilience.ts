@@ -224,6 +224,7 @@ export function createResilientRpcTransport(
 ): RpcTransport {
   const circuit = createCircuit("rpc", registry, options);
   const coalescer = createRequestCoalescer();
+  const callMany = transport.callMany?.bind(transport);
   const run = <T>(key: string, requestOptions: RequestOptions | undefined, task: (signal: AbortSignal) => Promise<TransportResult<T>>) =>
     coalescer.run(key, requestOptions?.signal, (signal) => circuit.run(() => task(signal)));
   return {
@@ -233,6 +234,11 @@ export function createResilientRpcTransport(
     call(input: RpcCall, requestOptions) {
       return run(`call:${stable(input)}`, requestOptions, (signal) => transport.call(input, { ...requestOptionsWithoutSignal(requestOptions), signal }));
     },
+    ...(callMany ? {
+      callMany(inputs: readonly RpcCall[], requestOptions?: RequestOptions) {
+        return run(`call-many:${stable(inputs)}`, requestOptions, (signal) => callMany(inputs, { ...requestOptionsWithoutSignal(requestOptions), signal }));
+      },
+    } : {}),
     getClassHashAt(address, requestOptions) {
       return run(`class-hash:${address}`, requestOptions, (signal) => transport.getClassHashAt(address, { ...requestOptionsWithoutSignal(requestOptions), signal }));
     },

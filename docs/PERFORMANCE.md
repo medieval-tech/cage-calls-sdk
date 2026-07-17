@@ -11,7 +11,7 @@ the selected Torii and RPC providers.
 | Event with up to 20 known fight IDs | RPC is authoritative: 1 batch | 1 batch | Requires `fightFeedByIds`; older contracts use one bounded call per fight and report a capability fallback. |
 | Latest 20 fights | 1 aggregate RPC feed | 1 aggregate RPC feed | This is already an authoritative contract view and does not need historical Torii discovery. |
 | First account action page | 1 account feed + up to 1 Gacha user batch | Same | Requires the additive account/Gacha views; older deployments return explicit degraded metadata. |
-| Gacha pools for up to 20 fights | 1 batch | 1 batch | Older deployments use bounded concurrent singleton calls. |
+| Gacha pools for up to 20 fights | 1 batch | 1 batch | A selected pool on an older deployment uses one 23-call JSON-RPC HTTP batch; failed detail hydration retains open/size without an RPC fan-out. |
 | Owned relic page | Indexed ownership pages + bounded hydration for incomplete owned rows | Paged ERC721 RPC recovery | Complete Torii rows cause no RPC reads; display hydration targets only incomplete owned token IDs. |
 | One relic detail | 1 indexed/RPC relic read | 1 RPC relic read | IPFS is a separate lazy display request. |
 
