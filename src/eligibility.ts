@@ -73,7 +73,10 @@ export function deriveFightActionEligibility(input: FightActionEligibilityInput)
 
 export function deriveGachaActionEligibility(input: GachaActionEligibilityInput): GachaActionEligibility {
   const { pool, user } = input;
-  const verified = input.stateComplete !== false;
+  const legacyVerified = input.stateComplete !== false;
+  const poolVerified = input.poolStateComplete ?? legacyVerified;
+  const readinessVerified = input.poolReadinessComplete ?? legacyVerified;
+  const userVerified = input.userStateComplete ?? legacyVerified;
   const escrowed = user?.escrowedTokenId !== undefined && user.escrowedTokenId > 0n;
   const expected = pool?.rarities.reduce((total, rarity) => total + rarity.expected, 0n) ?? 0n;
   const completePool = Boolean(pool)
@@ -85,7 +88,7 @@ export function deriveGachaActionEligibility(input: GachaActionEligibilityInput)
     ? deny("Connect a wallet to strike.")
     : !pool || !user
       ? deny("Pool or ticket state is unavailable.")
-      : !verified
+    : !poolVerified || !userVerified
         ? deny("Pool and ticket state could not be verified.")
         : !pool.open
           ? deny("The pool is closed.")
@@ -99,7 +102,7 @@ export function deriveGachaActionEligibility(input: GachaActionEligibilityInput)
     ? deny("Connect a wallet to keep a relic.")
     : !user
       ? deny("Escrow state is unavailable.")
-      : !verified
+    : !userVerified
         ? deny("Escrow state could not be verified.")
         : !escrowed
           ? deny("There is no relic in escrow.")
@@ -109,7 +112,7 @@ export function deriveGachaActionEligibility(input: GachaActionEligibilityInput)
     ? deny("Gacha admin permission is required.")
     : !pool
       ? deny("Pool state is unavailable.")
-      : !verified
+    : !poolVerified || !readinessVerified
         ? deny("Pool readiness could not be verified.")
         : pool.open
           ? deny("The pool is already open.")
@@ -123,7 +126,7 @@ export function deriveGachaActionEligibility(input: GachaActionEligibilityInput)
     ? deny("Gacha admin permission is required.")
     : !pool
       ? deny("Pool state is unavailable.")
-      : !verified
+    : !poolVerified
         ? deny("Pool state could not be verified.")
         : !pool.open
           ? deny("The pool is already closed.")

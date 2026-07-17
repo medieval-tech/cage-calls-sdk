@@ -419,36 +419,6 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     return toResult(context, startedAt, "starknet-rpc", relics, attempts, structured.meta.complete && relics.every(metadataComplete), warnings);
   };
 
-  async function hydrateToriiRelics(
-    relics: Relic[],
-    attempts: SourceAttempt[],
-    warnings: DataWarning[],
-    options: RequestOptions,
-    hydrateExternal = true,
-  ): Promise<Relic[]> {
-    const incomplete = relics
-      .filter((relic) => hydrateExternal ? !metadataComplete(relic) : !relic.metadata && relic.attributes.length === 0)
-      .map((relic) => relic.tokenId);
-    if (incomplete.length === 0) return relics;
-    try {
-      const hydrated = hydrateExternal
-        ? await getMany(incomplete, options)
-        : await getManyStructured(incomplete, options);
-      attempts.push(...hydrated.meta.attempts);
-      warnings.push(...hydrated.meta.warnings);
-      const byId = new Map(hydrated.data.map((relic) => [relic.tokenId.toString(), relic]));
-      return relics.map((relic) => mergeRelic(relic, byId.get(relic.tokenId.toString()) ?? relic));
-    } catch (error) {
-      attempts.push(...transportAttemptsFromError(error));
-      warnings.push({
-        code: "TORII_METADATA_HYDRATION_FAILED",
-        message: "Torii ownership was verified, but incomplete relic metadata could not be hydrated through RPC.",
-        source: "starknet-rpc",
-      });
-      return relics;
-    }
-  }
-
   async function toriiOwned(
     owner: Address,
     attempts: SourceAttempt[],
@@ -487,90 +457,9 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     return { relics: Array.from(relics.values()), complete };
   }
 
-  async function verifyToriiCandidates(
-    owner: Address,
-    candidates: Relic[],
-    attempts: SourceAttempt[],
-    warnings: DataWarning[],
-    options: RequestOptions,
-    hydrateExternal: boolean,
-  ): Promise<Relic[]> {
-    const verified = (await mapConcurrent(candidates, context.budget.maxConcurrency, async (relic) => {
-      try {
-        const response = await rpcCall(context, "owner_of", encodeU256(relic.tokenId), options);
-        attempts.push(...response.attempts);
-        return response.data[0] && sameAddress(response.data[0], owner) ? relic : undefined;
-      } catch (error) {
-        attempts.push(...transportAttemptsFromError(error));
-        return undefined;
-      }
-    })).filter((value): value is Relic => value !== undefined);
-    warnings.push({
-      code: "TORII_CANDIDATE_RPC_VERIFICATION",
-      message: `RPC ownership verification retained ${verified.length} of ${candidates.length} Torii relic candidates.`,
-      source: "starknet-rpc",
-    });
-    return hydrateToriiRelics(verified, attempts, warnings, options, hydrateExternal);
-  }
-
-  async function verifyToriiInventory(
-    owner: Address,
-    attempts: SourceAttempt[],
-    warnings: DataWarning[],
-    options: RequestOptions,
-    hydrateExternal: boolean,
-  ): Promise<{ relics: Relic[]; complete: boolean }> {
-    if (!context.torii) return { relics: [], complete: false };
-    const budget = resolveRequestBudget(context.budget, options);
-    const tokenIds: bigint[] = [];
-    let offset = 0;
-    let complete = false;
-    for (let page = 0; page < budget.maxToriiPages && tokenIds.length < budget.maxToriiItems; page += 1) {
-      const response = await context.torii.tokens(context.network.contracts.RelicNFT, { offset, limit: budget.pageSize }, options);
-      attempts.push(...response.attempts);
-      for (const edge of response.data.edges) {
-        if (tokenIds.length >= budget.maxToriiItems) break;
-        const token = edge.node.tokenMetadata;
-        if (!token?.tokenId) continue;
-        try { tokenIds.push(BigInt(token.tokenId)); } catch { /* skip malformed IDs */ }
-      }
-      offset += response.data.edges.length;
-      if (response.data.edges.length === 0 || offset >= response.data.totalCount) {
-        complete = true;
-        break;
-      }
-    }
-    if (!complete) {
-      const itemLimit = tokenIds.length >= budget.maxToriiItems;
-      warnings.push({
-        code: itemLimit ? "TORII_ITEM_LIMIT" : "TORII_PAGE_LIMIT",
-        message: itemLimit
-          ? `Relic inventory verification reached the ${budget.maxToriiItems} item budget at offset ${offset}.`
-          : `Relic inventory verification reached the ${budget.maxToriiPages} page budget at offset ${offset}.`,
-        source: "torii",
-      });
-    }
-    const ownedIds = (await mapConcurrent(tokenIds, context.budget.maxConcurrency, async (tokenId) => {
-      try {
-        const response = await rpcCall(context, "owner_of", encodeU256(tokenId), options);
-        attempts.push(...response.attempts);
-        return response.data[0] && sameAddress(response.data[0], owner) ? tokenId : undefined;
-      } catch (error) {
-        attempts.push(...transportAttemptsFromError(error));
-        return undefined;
-      }
-    })).filter((value): value is bigint => value !== undefined);
-    const hydrated = hydrateExternal
-      ? await getMany(ownedIds, options)
-      : await getManyStructured(ownedIds, options);
-    attempts.push(...hydrated.meta.attempts);
-    return { relics: hydrated.data, complete };
-  }
-
   async function rpcOwned(
     owner: Address,
     expectedBalance: bigint,
-    toriiInventory: { relics: Relic[]; complete: boolean },
     attempts: SourceAttempt[],
     warnings: DataWarning[],
     options: RequestOptions,
@@ -671,13 +560,7 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       return { relics: hydrated, complete };
     }
 
-    if (toriiInventory.relics.length > 0) {
-      const relics = await verifyToriiCandidates(owner, toriiInventory.relics, attempts, warnings, options, hydrateExternal);
-      if (relics.length > 0) return { relics, complete: toriiInventory.complete };
-    }
-
-    warnings.push({ code: "TORII_INVENTORY_RPC_VERIFICATION", message: "The deployment lacks owner pagination; token ownership was verified individually through RPC.", source: "starknet-rpc" });
-    return verifyToriiInventory(owner, attempts, warnings, options, hydrateExternal);
+    throw new UnsupportedCapabilityError("bounded relic ownership fallback");
   }
 
   async function loadInventory(
@@ -732,6 +615,42 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
         warnings.push({ code: "TORII_UNAVAILABLE", message: "Torii relic inventory lookup failed.", source: "torii" });
         toriiComplete = false;
       }
+    }
+
+    const toriiUnavailable = warnings.some((warning) => warning.code === "TORII_UNAVAILABLE");
+    if (context.torii && !toriiUnavailable) {
+      const fighters: Fighter[] = [];
+      let fightersComplete = input.enrichFighters === false;
+      if (input.enrichFighters !== false) {
+        try {
+          const response = await createFightersRepository(context).all({}, options);
+          attempts.push(...response.meta.attempts);
+          warnings.push(...response.meta.warnings);
+          fighters.push(...response.data.sort((a, b) => a.name.localeCompare(b.name)));
+          fightersComplete = response.meta.complete;
+        } catch (error) {
+          attempts.push(...transportAttemptsFromError(error));
+          warnings.push({ code: "TORII_FIGHTER_ENRICHMENT_FAILED", message: "Fighter names could not be enumerated through Torii.", source: "torii" });
+        }
+      }
+      const items = Array.from(relics.values()).sort((a, b) => a.tokenId === b.tokenId ? 0 : a.tokenId > b.tokenId ? -1 : 1);
+      const metadataComplete = items.every((relic) => relic.metadata || relic.attributes.length > 0);
+      if (!metadataComplete) {
+        warnings.push({
+          code: "TORII_METADATA_INCOMPLETE",
+          message: "Torii returned one or more relics without indexed attribute metadata.",
+          source: "torii",
+        });
+      }
+      return toResult(
+        context,
+        startedAt,
+        "torii",
+        { items, fighters, scannedCount: items.length, pageCount },
+        attempts,
+        toriiComplete && fightersComplete && metadataComplete,
+        warnings,
+      );
     }
 
     let expectedIds: bigint[] | undefined;
@@ -858,6 +777,36 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     const startedAt = context.now();
     const attempts: SourceAttempt[] = [];
     const warnings: DataWarning[] = [];
+    let toriiInventory: { relics: Relic[]; complete: boolean } = { relics: [], complete: false };
+    if (context.torii) {
+      try {
+        toriiInventory = await toriiOwned(owner, attempts, warnings, options);
+        const torii = hydrateExternal
+          ? await mapConcurrent(
+              toriiInventory.relics,
+              resolveRequestBudget(context.budget, options).maxConcurrency,
+              (relic) => hydrateJson(context, relic, attempts, warnings, options),
+            )
+          : toriiInventory.relics;
+        const metadataVerified = !hydrateExternal || torii.every(metadataComplete);
+        if (!metadataVerified) {
+          warnings.push({
+            code: "TORII_METADATA_INCOMPLETE",
+            message: "Torii returned one or more owned relics without complete media metadata.",
+            source: "torii",
+          });
+        }
+        return toResult(context, startedAt, "torii", {
+          items: torii.map((relic) => ({ ...relic, owner, ownershipSource: "torii" as const })),
+          hasMore: !toriiInventory.complete,
+          provenance: { owner, onchainBalance: BigInt(torii.length), ownershipSource: "torii", verified: toriiInventory.complete },
+        }, attempts, toriiInventory.complete && metadataVerified, warnings);
+      } catch (error) {
+        attempts.push(...transportAttemptsFromError(error));
+        warnings.push({ code: "TORII_UNAVAILABLE", message: "Torii ownership lookup failed.", source: "torii" });
+      }
+    }
+
     let balance: bigint;
     try {
       const response = await rpcCall(context, "balance_of", [owner], options);
@@ -873,31 +822,11 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
         items: [],
         hasMore: false,
         provenance: { owner, onchainBalance: 0n, ownershipSource: "starknet-rpc", verified: true },
-      }, attempts, true);
-    }
-
-    let toriiInventory: { relics: Relic[]; complete: boolean } = { relics: [], complete: false };
-    if (context.torii) {
-      try {
-        toriiInventory = await toriiOwned(owner, attempts, warnings, options);
-        let torii = toriiInventory.relics;
-        if (BigInt(torii.length) === balance) {
-          torii = await hydrateToriiRelics(torii, attempts, warnings, options, hydrateExternal);
-          return toResult(context, startedAt, "torii", {
-            items: torii.map((relic) => ({ ...relic, owner, ownershipSource: "torii" as const })),
-            hasMore: false,
-            provenance: { owner, onchainBalance: balance, ownershipSource: "torii", verified: true },
-          }, attempts, !hydrateExternal || torii.every(metadataComplete), warnings);
-        }
-        warnings.push({ code: "TORII_BALANCE_MISMATCH", message: `Torii returned ${torii.length} of ${balance} owned relics.`, source: "torii" });
-      } catch (error) {
-        attempts.push(...transportAttemptsFromError(error));
-        warnings.push({ code: "TORII_UNAVAILABLE", message: "Torii ownership lookup failed.", source: "torii" });
-      }
+      }, attempts, true, warnings);
     }
 
     try {
-      const discovered = await rpcOwned(owner, balance, toriiInventory, attempts, warnings, options, hydrateExternal);
+      const discovered = await rpcOwned(owner, balance, attempts, warnings, options, hydrateExternal);
       const verified = BigInt(discovered.relics.length) === balance;
       if (discovered.relics.length === 0 && balance > 0n) throw new AllSourcesFailedError("relics.owned", attempts);
       if (!verified) warnings.push({ code: "RPC_BALANCE_MISMATCH", message: `RPC discovery found ${discovered.relics.length} of ${balance} relics.`, source: "starknet-rpc" });
@@ -929,7 +858,6 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       const budget = resolveRequestBudget(context.budget, options);
       const size = clampPageSize(input.limit, 200, Math.min(200, budget.pageSize));
       const cursorState = decodeFeedCursor(input.cursor);
-      let toriiReturnedEmpty = false;
 
       if (context.torii && cursorState.kind !== "rpc") {
         const offset = cursorState.kind === "torii" || cursorState.kind === "legacy-torii"
@@ -951,24 +879,11 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
               return mapped ? [mapped] : [];
             });
             if (toriiItems.length > 0) {
-              let items = toriiItems;
-              const needsRpc = items.filter((relic) => !metadataComplete(relic)).map((relic) => relic.tokenId);
-              if (needsRpc.length > 0) {
-                try {
-                  const hydrated = await getMany(needsRpc, options);
-                  attempts.push(...hydrated.meta.attempts);
-                  warnings.push(...hydrated.meta.warnings);
-                  const byId = new Map(hydrated.data.map((relic) => [relic.tokenId.toString(), relic]));
-                  items = items.map((relic) => mergeRelic(relic, byId.get(relic.tokenId.toString()) ?? relic));
-                } catch (error) {
-                  attempts.push(...transportAttemptsFromError(error));
-                  warnings.push({
-                    code: "TORII_RELIC_ENRICHMENT_FAILED",
-                    message: "Torii relic inventory was available, but structured onchain data could not be enriched through RPC.",
-                    source: "starknet-rpc",
-                  });
-                }
-              }
+              const items = await mapConcurrent(
+                toriiItems,
+                budget.maxConcurrency,
+                (relic) => hydrateJson(context, relic, attempts, warnings, options),
+              );
               const nextOffset = offset + response.data.edges.length;
               const tokenRows = Math.max(0, response.data.totalCount - 1);
               const hasMore = nextOffset < tokenRows;
@@ -987,7 +902,9 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
                 warnings,
               );
             }
-            toriiReturnedEmpty = cursorState.kind === "start" && Math.max(0, response.data.totalCount - 1) === 0;
+            if (cursorState.kind === "start" && Math.max(0, response.data.totalCount - 1) === 0) {
+              return toResult(context, startedAt, "torii", { items: [], cursor: 0n, hasMore: false }, attempts, true, warnings);
+            }
             if (cursorState.kind === "torii" || response.data.edges.length > 0) {
               return toResult(context, startedAt, "torii", { items: [], cursor: 0n, hasMore: false }, attempts, true, warnings);
             }
@@ -1009,13 +926,6 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
         const response = await rpcCall(context, "get_relic_feed", [...encodeU256(rpcCursor), rpcSize.toString()], options);
         attempts.push(...response.attempts);
         const rows = decodeRelicRowsRpc(response.data);
-        if (context.torii && toriiReturnedEmpty && rows.length > 0) {
-          warnings.push({
-            code: "TORII_INVENTORY_EMPTY",
-            message: "Torii returned no RelicNFT inventory even though the contract returned relics.",
-            source: "torii",
-          });
-        }
         const items = await mapConcurrent(rows, context.budget.maxConcurrency, (relic) => hydrateJson(context, relic, attempts, warnings, options));
         const oldest = items.at(-1)?.tokenId ?? 0n;
         const cursor = oldest > 1n ? oldest - 1n : 0n;

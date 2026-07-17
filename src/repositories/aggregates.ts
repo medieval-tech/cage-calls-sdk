@@ -282,63 +282,87 @@ export function createAggregateRepositories(
         const startedAt = context.now();
         const attempts: SourceAttempt[] = [];
         const warnings: DataWarning[] = [];
-        let feed: Awaited<ReturnType<FightsRepository["accountFeed"]>>;
-        let accountComplete = true;
+        const limit = Math.max(1, Math.min(input.limit ?? 20, 100));
         try {
-          feed = await dependencies.fights.accountFeed(account, input, options);
+          const portfolio = await dependencies.fights.portfolioAll(account, options);
+          attempts.push(...portfolio.meta.attempts);
+          warnings.push(...portfolio.meta.warnings);
+          const ordered = portfolio.data
+            .slice()
+            .sort((left, right) => left.fightId === right.fightId ? 0 : left.fightId > right.fightId ? -1 : 1)
+            .filter((buy) => input.cursor === undefined || input.cursor === 0n || buy.fightId <= input.cursor);
+          const pageBuys = ordered.slice(0, limit);
+          const snapshots = await dependencies.fights.feedMany(pageBuys.map((buy) => buy.fightId), { viewer: account }, options);
+          attempts.push(...snapshots.meta.attempts);
+          warnings.push(...snapshots.meta.warnings);
+          const items = snapshots.data.map((fight) => ({ fight }));
+          const hasMore = ordered.length > pageBuys.length;
+          const oldest = pageBuys.at(-1)?.fightId ?? 0n;
+          return aggregateResult(context, startedAt, {
+            account,
+            items,
+            actions: items.flatMap(actionsFor),
+            ...(hasMore && oldest > 1n ? { cursor: oldest - 1n } : {}),
+            hasMore,
+          }, attempts, warnings, portfolio.meta.complete && snapshots.meta.complete);
         } catch (error) {
           attempts.push(...transportAttemptsFromError(error));
-          warnings.push({
-            code: "CAPABILITY_FALLBACK",
-            message: "Account fight state used the bounded public feed because the account feed is unavailable.",
+          const fallback = await dependencies.fights.accountFeed(account, { limit, ...(input.cursor === undefined ? {} : { cursor: input.cursor }) }, options);
+          attempts.push(...fallback.meta.attempts);
+          warnings.push(...fallback.meta.warnings, {
+            code: "TORII_FALLBACK",
+            message: "Account positions used the bounded aggregate contract view because Torii was unavailable.",
             source: "starknet-rpc",
           });
-          const publicFeed = await dependencies.fights.feed({ ...input, viewer: account }, options);
-          feed = {
-            ...publicFeed,
-            data: {
-              ...publicFeed.data,
-              items: publicFeed.data.items.filter((fight) => fight.viewer.hasBought),
-            },
-          };
-          accountComplete = false;
+          const items = fallback.data.items.map((fight) => ({ fight }));
+          return aggregateResult(context, startedAt, {
+            account,
+            items,
+            actions: items.flatMap(actionsFor),
+            ...(fallback.data.cursor === undefined ? {} : { cursor: fallback.data.cursor }),
+            hasMore: fallback.data.hasMore,
+          }, attempts, warnings, fallback.meta.complete);
         }
-        attempts.push(...feed.meta.attempts);
-        warnings.push(...feed.meta.warnings);
-        const enriched = await enrichAccountFights(context, dependencies.gacha, feed.data.items, account, attempts, warnings, options);
-        const items = enriched.fights;
-        return aggregateResult(context, startedAt, {
-          account,
-          items,
-          actions: items.flatMap(actionsFor),
-          ...(feed.data.cursor === undefined ? {} : { cursor: feed.data.cursor }),
-          hasMore: feed.data.hasMore,
-        }, attempts, warnings, accountComplete && feed.meta.complete && enriched.complete);
       },
       async portfolio(accountInput, options = {}) {
         const account = normalizeAddress(accountInput);
         const startedAt = context.now();
         const attempts: SourceAttempt[] = [];
         const warnings: DataWarning[] = [];
-        const accountFeed = (typeof dependencies.fights.accountFeedAll === "function"
-          ? dependencies.fights.accountFeedAll(account, options)
-          : Promise.reject(new Error("Account fight feed is unavailable"))).catch(() =>
-          dependencies.fights.feedAll({ viewer: account }, options).then((value) => ({
-            ...value,
-            data: value.data.filter((fight) => fight.viewer.hasBought),
-          })));
         const reads = await Promise.allSettled([
-          accountFeed,
           dependencies.fights.portfolioAll(account, options),
           dependencies.relics.owned(account, options),
           dependencies.tokens.callsBalance(account, options),
         ]);
-        const [feedRead, buysRead, relicsRead, balanceRead] = reads;
-        if (feedRead.status === "rejected") throw feedRead.reason;
-        const feed = feedRead.value;
-        attempts.push(...feed.meta.attempts);
-        warnings.push(...feed.meta.warnings);
-        let complete = feed.meta.complete;
+        const [buysRead, relicsRead, balanceRead] = reads;
+        let buys: FightBuy[];
+        let prefetchedFights: FightFeedItem[] | undefined;
+        let complete: boolean;
+        if (buysRead.status === "fulfilled") {
+          attempts.push(...buysRead.value.meta.attempts);
+          warnings.push(...buysRead.value.meta.warnings);
+          buys = buysRead.value.data;
+          complete = buysRead.value.meta.complete;
+        } else {
+          attempts.push(...transportAttemptsFromError(buysRead.reason));
+          const fallback = await dependencies.fights.accountFeedAll(account, options);
+          attempts.push(...fallback.meta.attempts);
+          warnings.push(...fallback.meta.warnings, {
+            code: "TORII_FALLBACK",
+            message: "Account portfolio used the bounded aggregate contract view because Torii was unavailable.",
+            source: "starknet-rpc",
+          });
+          prefetchedFights = fallback.data;
+          buys = fallback.data.flatMap((fight): FightBuy[] => fight.viewer.hasBought && fight.viewer.choiceIndex !== undefined ? [{
+            fightId: fight.fightId,
+            buyer: account,
+            marketId: fight.marketId,
+            choiceIndex: fight.viewer.choiceIndex,
+            amount: fight.viewer.shares,
+            boughtAt: fight.viewer.boughtAt,
+          }] : []);
+          complete = fallback.meta.complete;
+        }
         const absorb = <T>(read: PromiseSettledResult<DataResult<T>>, label: string, fallback: T): T => {
           if (read.status === "fulfilled") {
             attempts.push(...read.value.meta.attempts);
@@ -351,12 +375,17 @@ export function createAggregateRepositories(
           complete = false;
           return fallback;
         };
-        const buys = absorb(buysRead, "Fight buys", [] as FightBuy[]);
         const relicPage = absorb(relicsRead, "Owned relics", undefined);
         const callsBalance = absorb(balanceRead, "CALLS balance", 0n);
-        const accountState = await enrichAccountFights(context, dependencies.gacha, feed.data, account, attempts, warnings, options);
-        complete &&= accountState.complete;
-        const fights = accountState.fights;
+        const snapshots = prefetchedFights === undefined
+          ? await dependencies.fights.feedMany(buys.map((buy) => buy.fightId), { viewer: account }, options)
+          : undefined;
+        if (snapshots) {
+          attempts.push(...snapshots.meta.attempts);
+          warnings.push(...snapshots.meta.warnings);
+          complete &&= snapshots.meta.complete;
+        }
+        const fights = (snapshots?.data ?? prefetchedFights ?? []).map((fight) => ({ fight }));
         const relics = relicPage?.items ?? [];
         return aggregateResult(context, startedAt, {
           account,

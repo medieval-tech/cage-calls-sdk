@@ -40,8 +40,6 @@ const CAPABILITY_PROBES: Readonly<Record<CapabilityName, { contract: ContractNam
   gachaUserStates: { contract: "Gacha", entrypoint: "get_user_states", calldata: ["0", "0"] },
 };
 
-const RUNTIME_PROBE_CAPABILITIES = new Set<CapabilityName>(["fightFeedByIds", "accountFightFeed", "gachaUserStates"]);
-
 function validateUrl(value: string, label: string): string {
   try {
     const url = new URL(value);
@@ -131,7 +129,7 @@ export function createCapabilityRegistry(network: CageCallsNetwork, rpc: RpcTran
     if (unsupported.has(capability)) return false;
     // Generated deployment presets are authoritative. Probing a known-false
     // capability only spends RPC budget on an entrypoint that cannot exist.
-    if (network.preset && !RUNTIME_PROBE_CAPABILITIES.has(capability)) {
+    if (network.preset) {
       unsupported.add(capability);
       return false;
     }

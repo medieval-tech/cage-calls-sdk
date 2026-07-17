@@ -52,7 +52,7 @@ describe("bounded product reads", () => {
     expect(rpc.calls.filter((call) => call.entrypoint === "get_fight_feed_by_ids")).toHaveLength(2);
   });
 
-  it("uses a bounded explicit fallback when the exact-ID view is unavailable", async () => {
+  it("does not replace a missing aggregate with per-fight RPC fan-out", async () => {
     const rpc = createMockRpcTransport({
       calls: {
         get_fight_feed_by_ids: new Error("entrypoint missing"),
@@ -68,12 +68,8 @@ describe("bounded product reads", () => {
       capabilities: { fightFeedByIds: false },
     });
 
-    const response = await client.fights.feedMany([9n, 3n]);
-
-    expect(response.data.map((fight) => fight.fightId)).toEqual([9n, 3n]);
-    expect(response.meta.complete).toBe(false);
-    expect(response.meta.warnings.map((warning) => warning.code)).toContain("CAPABILITY_FALLBACK");
-    expect(rpc.calls.filter((call) => call.entrypoint === "get_fight_feed")).toHaveLength(2);
+    await expect(client.fights.feedMany([9n, 3n])).rejects.toThrow("exact fight snapshots");
+    expect(rpc.calls).toEqual([]);
   });
 
   it("retrieves an event by backend-known IDs without scanning the fight cursor", async () => {
@@ -118,9 +114,9 @@ describe("bounded product reads", () => {
 
     expect(pools.data.map((pool) => pool.fightId)).toEqual([4n, 2n]);
     expect(account.data.items).toHaveLength(1);
-    expect(account.data.actions).toEqual([{ type: "strike-gacha", fightId: 4n, ticketBalance: 2n }]);
+    expect(account.data.actions).toEqual([]);
     expect(rpc.calls.filter((call) => call.entrypoint === "get_account_fight_feed")).toHaveLength(1);
-    expect(rpc.calls.filter((call) => call.entrypoint === "get_user_states")).toHaveLength(1);
+    expect(rpc.calls.filter((call) => call.entrypoint === "get_user_states")).toHaveLength(0);
   });
 
   it("advances the inclusive account cursor without duplicating the oldest fight", async () => {
@@ -169,7 +165,7 @@ describe("bounded product reads", () => {
     expect(rpc.calls.filter((call) => call.entrypoint === "get_user_states")).toHaveLength(2);
   });
 
-  it("reports capability provenance and probes account feeds with a valid limit", async () => {
+  it("treats generated unsupported capabilities as authoritative", async () => {
     const rpc = createMockRpcTransport({ calls: { get_account_fight_feed: ["0"] } });
     const client = createTestClient({
       network: MAINNET_PRESET,
@@ -180,7 +176,7 @@ describe("bounded product reads", () => {
     expect(client.capabilities.diagnostics().fightFeedByIds).toEqual({ supported: true, source: "override" });
     await client.capabilities.probe("accountFightFeed");
 
-    expect(rpc.calls.at(-1)?.calldata).toEqual(["0", "0", "0", "0", "1"]);
-    expect(client.capabilities.diagnostics().accountFightFeed).toEqual({ supported: true, source: "runtime-probe" });
+    expect(rpc.calls).toEqual([]);
+    expect(client.capabilities.diagnostics().accountFightFeed).toEqual({ supported: false, source: "preset" });
   });
 });

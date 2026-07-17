@@ -108,6 +108,12 @@ export function useFight(fightId: bigint, options?: Options<DataResult<Fight>>) 
   return useQuery({ queryKey: keys.fight(fightId), queryFn: ({ signal }) => client.fights.get(fightId, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
+export function useFightsMany(fightIds: readonly bigint[], options?: Options<DataResult<Fight[]>>) {
+  const client = useCageCallsClient();
+  const keys = queryKeysFor(client);
+  return useQuery({ queryKey: keys.fightsMany(fightIds), queryFn: ({ signal }) => client.fights.getMany(fightIds, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
 export function useFights(input: FightsInput = {}, options?: Options<DataResult<Page<Fight>>>) {
   const client = useCageCallsClient();
   const keys = queryKeysFor(client);
@@ -260,7 +266,7 @@ export function useMarketState(marketId: bigint, outcomeSlotCount: number, condi
 export function useMarketPosition(positionId: bigint, options?: Options<DataResult<MarketPosition>>) {
   const client = useCageCallsClient();
   const keys = queryKeysFor(client);
-  return useQuery({ queryKey: ["cage-calls", "market-position", positionId.toString()], queryFn: ({ signal }) => client.markets.position(positionId, { signal }), refetchOnWindowFocus: false, ...options });
+  return useQuery({ queryKey: [...keys.market(positionId), "position"], queryFn: ({ signal }) => client.markets.position(positionId, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
 export function useConditionalBalance(account: Address, positionId: bigint, options?: Options<DataResult<bigint>>) {
@@ -387,6 +393,12 @@ export function useStrikeTicketBalance(account: Address, fightId: bigint, option
   const client = useCageCallsClient();
   const keys = queryKeysFor(client);
   return useQuery({ queryKey: keys.tokens(account, `strike:${fightId}`), queryFn: ({ signal }) => client.tokens.strikeTicketBalance(account, fightId, { signal }), refetchOnWindowFocus: false, ...options });
+}
+
+export function useStrikeTicketBalances(account: Address, options?: Options<Awaited<ReturnType<CageCallsClient["tokens"]["strikeTicketBalances"]>>>) {
+  const client = useCageCallsClient();
+  const keys = queryKeysFor(client);
+  return useQuery({ queryKey: keys.tokens(account, "strike:all"), queryFn: ({ signal }) => client.tokens.strikeTicketBalances(account, { signal }), refetchOnWindowFocus: false, ...options });
 }
 
 export function useVaultPositionBalance(account: Address, positionId: bigint, options?: Options<DataResult<bigint>>) {

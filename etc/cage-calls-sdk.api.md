@@ -517,6 +517,7 @@ export const cageCallsQueryKeys: Readonly<{
         cursor?: string;
         seasonId?: bigint;
     }) => readonly ["cage-calls", ...unknown[]];
+    fightsMany: (fightIds: readonly bigint[]) => readonly ["cage-calls", ...unknown[]];
     fight: (fightId: bigint) => readonly ["cage-calls", ...unknown[]];
     fightFeed: (input?: {
         limit?: number;
@@ -1267,6 +1268,8 @@ export interface FightsRepository {
     }, options?: RequestOptions): Promise<DataResult<FightFeedItem[]>>;
     // (undocumented)
     get(fightId: bigint, options?: RequestOptions): Promise<DataResult<Fight>>;
+    // (undocumented)
+    getMany(fightIds: readonly bigint[], options?: RequestOptions): Promise<DataResult<Fight[]>>;
     // @deprecated (undocumented)
     list(input?: {
         limit?: number;
@@ -1348,10 +1351,13 @@ export interface GachaActionEligibilityInput {
     gachaAdmin?: boolean;
     // (undocumented)
     pool?: GachaPoolState;
-    // (undocumented)
+    poolReadinessComplete?: boolean;
+    poolStateComplete?: boolean;
+    // @deprecated (undocumented)
     stateComplete?: boolean;
     // (undocumented)
     user?: GachaUserState;
+    userStateComplete?: boolean;
 }
 
 // @public (undocumented)
@@ -1435,6 +1441,18 @@ export interface GachaUserStates {
 
 // @public (undocumented)
 export type Hex = `0x${string}`;
+
+// @public (undocumented)
+export interface IndexedTokenBalance {
+    // (undocumented)
+    balance: bigint;
+    // (undocumented)
+    contractAddress: Address;
+    // (undocumented)
+    tokenId?: bigint;
+    // (undocumented)
+    tokenType?: "erc20" | "erc721" | "erc1155";
+}
 
 // @public (undocumented)
 export function ipfsPath(uri: string): string | undefined;
@@ -1808,6 +1826,9 @@ export function normalizeFightViewerState(viewer: FightViewerState): FightViewer
 
 // @public (undocumented)
 export function normalizeRelicMoveType(value: string): string;
+
+// @public
+export function normalizeU256(value: string | number | bigint, label?: string): Hex;
 
 // @public (undocumented)
 export interface OwnedRelicsPage extends Page<Relic> {
@@ -2506,6 +2527,8 @@ export function toHex(value: string | number | bigint): Hex;
 // @public (undocumented)
 export interface TokensRepository {
     // (undocumented)
+    accountBalances(account: Address, options?: RequestOptions): Promise<DataResult<IndexedTokenBalance[]>>;
+    // (undocumented)
     callsAllowance(owner: Address, spender?: Address, options?: RequestOptions): Promise<DataResult<bigint>>;
     // (undocumented)
     callsBalance(account: Address, options?: RequestOptions): Promise<DataResult<bigint>>;
@@ -2513,6 +2536,8 @@ export interface TokensRepository {
     isApprovedForAll(token: "StrikeTickets" | "VaultPositions" | "ConditionalTokens", owner: Address, operator: Address, options?: RequestOptions): Promise<DataResult<boolean>>;
     // (undocumented)
     strikeTicketBalance(account: Address, fightId: bigint, options?: RequestOptions): Promise<DataResult<bigint>>;
+    // (undocumented)
+    strikeTicketBalances(account: Address, options?: RequestOptions): Promise<DataResult<IndexedTokenBalance[]>>;
     // (undocumented)
     vaultPositionBalance(account: Address, positionId: bigint, options?: RequestOptions): Promise<DataResult<bigint>>;
 }
@@ -2594,6 +2619,7 @@ export interface ToriiTokenConnection {
 export interface ToriiTokenNode {
     // (undocumented)
     __typename?: string;
+    amount?: string;
     // (undocumented)
     contractAddress?: string;
     // (undocumented)
