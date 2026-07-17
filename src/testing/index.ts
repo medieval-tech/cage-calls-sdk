@@ -21,6 +21,7 @@ const ok = <T>(data: T, source: SourceAttempt["source"], operation: string): Tra
 
 export interface MockRpcTransport extends RpcTransport {
   calls: RpcCall[];
+  batches: RpcCall[][];
   requests: Array<{ method: string; params?: readonly unknown[] | Record<string, unknown> }>;
 }
 
@@ -30,9 +31,18 @@ export function createMockRpcTransport(input: {
   classHashes?: Record<string, Felt>;
 } = {}): MockRpcTransport {
   const calls: RpcCall[] = [];
+  const batches: RpcCall[][] = [];
   const requests: MockRpcTransport["requests"] = [];
+  const resolveCall = (call: RpcCall) => {
+    const key = `${call.contractAddress}:${call.entrypoint}`;
+    const value = input.calls?.[key] ?? input.calls?.[call.entrypoint];
+    if (value instanceof Error) throw value;
+    if (value === undefined) throw new Error(`Unhandled mock RPC call ${key}`);
+    return Array.from(typeof value === "function" ? value(call) : value);
+  };
   return {
     calls,
+    batches,
     requests,
     async request<T>(method: string, params?: readonly unknown[] | Record<string, unknown>) {
       requests.push({ method, ...(params === undefined ? {} : { params }) });
@@ -43,11 +53,13 @@ export function createMockRpcTransport(input: {
     },
     async call(call) {
       calls.push(call);
-      const key = `${call.contractAddress}:${call.entrypoint}`;
-      const value = input.calls?.[key] ?? input.calls?.[call.entrypoint];
-      if (value instanceof Error) throw value;
-      if (value === undefined) throw new Error(`Unhandled mock RPC call ${key}`);
-      return ok(Array.from(typeof value === "function" ? value(call) : value), "starknet-rpc", call.entrypoint);
+      return ok(resolveCall(call), "starknet-rpc", call.entrypoint);
+    },
+    async callMany(batch) {
+      const copied = batch.map((call) => ({ ...call }));
+      batches.push(copied);
+      calls.push(...copied);
+      return ok(copied.map(resolveCall), "starknet-rpc", "starknet_call_batch");
     },
     async getClassHashAt(address) {
       const value = input.classHashes?.[address];

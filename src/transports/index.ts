@@ -19,6 +19,8 @@ export interface RpcCall {
 export interface RpcTransport {
   request<T>(method: string, params?: readonly unknown[] | Record<string, unknown>, options?: RequestOptions): Promise<TransportResult<T>>;
   call(input: RpcCall, options?: RequestOptions): Promise<TransportResult<string[]>>;
+  /** Executes independent Starknet calls in one JSON-RPC HTTP batch when supported. */
+  callMany?(inputs: readonly RpcCall[], options?: RequestOptions): Promise<TransportResult<string[][]>>;
   getClassHashAt(address: Address, options?: RequestOptions): Promise<TransportResult<Felt>>;
 }
 
@@ -252,6 +254,34 @@ function toriiAddress(value: Address): string {
   return `0x${normalizeAddress(value).slice(2).padStart(64, "0")}`;
 }
 
+function rpcCallParams(input: RpcCall) {
+  const call = {
+    contract_address: normalizeAddress(input.contractAddress),
+    entry_point_selector: selectorFromName(input.entrypoint),
+    calldata: (input.calldata ?? []).map((value) => normalizeFelt(value)),
+  };
+  return [call, input.blockId ?? "latest"] as const;
+}
+
+function decodeRpcEnvelope<T>(payload: unknown): { id?: number; data: T } {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new TransportError("starknet-rpc", "RPC response was not a JSON-RPC object.");
+  }
+  const record = payload as { id?: unknown; result?: T; error?: { code?: number; message?: string } };
+  if (record.error) {
+    const code = record.error.code === undefined ? "RPC_ERROR" : `RPC_${record.error.code}`;
+    throw new TransportError("starknet-rpc", `RPC request failed (${code}).`, {
+      ...(record.error.code === undefined ? {} : { rpcCode: record.error.code }),
+      transportCode: code,
+    });
+  }
+  if (!("result" in record)) throw new TransportError("starknet-rpc", "RPC response did not include a result.");
+  return {
+    ...(typeof record.id === "number" ? { id: record.id } : {}),
+    data: record.result as T,
+  };
+}
+
 export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
   const endpoint = validateHttpUrl(options.url, "RPC URL");
   const fetchImpl = resolveFetch(options.fetch);
@@ -272,9 +302,10 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
   const acquire = createConcurrencyGate(maxConcurrency);
   let id = 0;
 
-  const request = async <T>(
-    method: string,
-    params: readonly unknown[] | Record<string, unknown> = [],
+  const execute = async <T>(
+    operation: string,
+    body: unknown,
+    decode: (payload: unknown) => T,
     requestOptions: RequestOptions = {},
   ): Promise<TransportResult<T>> => {
     const startedAt = Date.now();
@@ -296,7 +327,7 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
           const response = await fetchImpl(endpoint, {
             method: "POST",
             headers: { "content-type": "application/json", ...options.headers },
-            body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
+            body: JSON.stringify(body),
             signal: timeout.signal,
           });
           serverDelayMs = retryAfterMs(response);
@@ -306,23 +337,15 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
               transportCode: `HTTP_${response.status}`,
             });
           }
-          const payload = await response.json() as { result?: T; error?: { code?: number; message?: string } };
-          if (payload.error) {
-            const code = payload.error.code === undefined ? "RPC_ERROR" : `RPC_${payload.error.code}`;
-            throw new TransportError("starknet-rpc", `RPC request failed (${code}).`, {
-              ...(payload.error.code === undefined ? {} : { rpcCode: payload.error.code }),
-              transportCode: code,
-            });
-          }
-          if (!("result" in payload)) throw new TransportError("starknet-rpc", "RPC response did not include a result.");
+          const payload = await response.json() as unknown;
           return {
-            data: payload.result as T,
-            attempts: [...retryAttempts, attempt("starknet-rpc", method, requestStartedAt, true)],
+            data: decode(payload),
+            attempts: [...retryAttempts, attempt("starknet-rpc", operation, requestStartedAt, true)],
           };
         } catch (cause) {
           const rateLimited = cause instanceof TransportError && (cause.status === 429 || cause.rpcCode === 429);
           if (!rateLimited || retry >= maxRetries || timeout.signal.aborted || requestOptions.signal?.aborted) throw cause;
-          retryAttempts.push(attempt("starknet-rpc", method, requestStartedAt, false, {
+          retryAttempts.push(attempt("starknet-rpc", operation, requestStartedAt, false, {
             ...(cause.status === undefined ? {} : { status: cause.status }),
             errorCode: transportDiagnosticCode(cause),
           }));
@@ -339,10 +362,10 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
         ? cause
         : new TransportError("starknet-rpc", `RPC request failed (${transportCode}).`, { cause, transportCode });
       if (transportDiagnosticCode(transportError) !== "ABORTED") {
-        options.logger?.warn?.("Cage Calls RPC request failed.", transportLogContext(method, transportError, endpoint, endpointRole));
+        options.logger?.warn?.("Cage Calls RPC request failed.", transportLogContext(operation, transportError, endpoint, endpointRole));
       }
       Object.defineProperty(transportError, "attempts", {
-        value: [...retryAttempts, attempt("starknet-rpc", method, requestStartedAt, false, {
+        value: [...retryAttempts, attempt("starknet-rpc", operation, requestStartedAt, false, {
           ...(transportError.status === undefined ? {} : { status: transportError.status }),
           errorCode: transportDiagnosticCode(transportError),
         })],
@@ -354,23 +377,62 @@ export function createHttpRpcTransport(options: HttpRpcOptions): RpcTransport {
     }
   };
 
+  const request = async <T>(
+    method: string,
+    params: readonly unknown[] | Record<string, unknown> = [],
+    requestOptions: RequestOptions = {},
+  ): Promise<TransportResult<T>> => execute(
+    method,
+    { jsonrpc: "2.0", id: ++id, method, params },
+    (payload) => decodeRpcEnvelope<T>(payload).data,
+    requestOptions,
+  );
+
   return {
     request,
     async call(input, requestOptions) {
       const startedAt = Date.now();
-      const call = {
-        contract_address: normalizeAddress(input.contractAddress),
-        entry_point_selector: selectorFromName(input.entrypoint),
-        calldata: (input.calldata ?? []).map((value) => normalizeFelt(value)),
-      };
       try {
-        const response = await request<string[]>("starknet_call", [call, input.blockId ?? "latest"], requestOptions);
+        const response = await request<string[]>("starknet_call", rpcCallParams(input), requestOptions);
         options.logger?.debug?.("Cage Calls RPC call completed.", rpcCallLogContext(input, startedAt, response.attempts));
         return response;
       } catch (error) {
         options.logger?.debug?.("Cage Calls RPC call failed.", rpcCallLogContext(input, startedAt, attemptsFromError(error), error));
         throw error;
       }
+    },
+    async callMany(inputs, requestOptions = {}) {
+      if (inputs.length === 0) return { data: [], attempts: [] };
+      const requests = inputs.map((input) => ({
+        id: ++id,
+        jsonrpc: "2.0" as const,
+        method: "starknet_call" as const,
+        params: rpcCallParams(input),
+      }));
+      return execute(
+        "starknet_call_batch",
+        requests,
+        (payload) => {
+          if (!Array.isArray(payload)) {
+            throw new TransportError("starknet-rpc", "RPC batch response was not an array.");
+          }
+          const byId = new Map<number, unknown>();
+          for (const item of payload) {
+            if (!item || typeof item !== "object" || Array.isArray(item) || typeof (item as { id?: unknown }).id !== "number") {
+              throw new TransportError("starknet-rpc", "RPC batch response included an invalid identifier.");
+            }
+            const responseId = (item as { id: number }).id;
+            if (byId.has(responseId)) throw new TransportError("starknet-rpc", "RPC batch response included a duplicate identifier.");
+            byId.set(responseId, item);
+          }
+          return requests.map((request) => {
+            const item = byId.get(request.id);
+            if (!item) throw new TransportError("starknet-rpc", "RPC batch response omitted a requested call.");
+            return decodeRpcEnvelope<string[]>(item).data;
+          });
+        },
+        requestOptions,
+      );
     },
     async getClassHashAt(address, requestOptions) {
       const result = await request<string>("starknet_getClassHashAt", ["latest", normalizeAddress(address)], requestOptions);
@@ -423,7 +485,11 @@ export function createRpcPoolTransport(options: {
       ...(options.retryBaseDelayMs === undefined ? {} : { retryBaseDelayMs: options.retryBaseDelayMs }),
     }),
   }));
-  const request = async <T>(method: string, params?: readonly unknown[] | Record<string, unknown>, requestOptions?: RequestOptions) => {
+  const execute = async <T>(
+    operation: string,
+    requestOptions: RequestOptions | undefined,
+    task: (transport: RpcTransport) => Promise<TransportResult<T>>,
+  ) => {
     const available = endpoints.map((_, index) => index).filter((index) => (retryAt[index] ?? 0) <= now());
     const candidates = available.length > 0
       ? available
@@ -434,7 +500,7 @@ export function createRpcPoolTransport(options: {
       const endpoint = endpoints[index];
       if (!endpoint) continue;
       try {
-        const response = await endpoint.transport.request<T>(method, params, requestOptions);
+        const response = await task(endpoint.transport);
         retryAt[index] = 0;
         return { ...response, attempts: [...attempts, ...response.attempts.map((value) => ({ ...value, fallback: index > 0 }))] };
       } catch (error) {
@@ -445,8 +511,9 @@ export function createRpcPoolTransport(options: {
           error.status === 408 || error.status === 429 || error.rpcCode === 429 || code.includes("TIMEOUT")
         )) retryAt[index] = now() + cooldownMs;
         if (requestOptions?.signal?.aborted || code === "ABORTED") break;
+        if (!shouldUseRpcFallback(error)) break;
         options.logger?.warn?.("Cage Calls RPC pool selected the next endpoint.", {
-          method,
+          method: operation,
           failedEndpoint: endpoint.name,
           failedEndpointUrl: redactUrl(endpoint.url),
           errorCode: code,
@@ -457,15 +524,19 @@ export function createRpcPoolTransport(options: {
     Object.defineProperty(error, "attempts", { value: attempts });
     throw error;
   };
+  const request = <T>(method: string, params?: readonly unknown[] | Record<string, unknown>, requestOptions?: RequestOptions) =>
+    execute(method, requestOptions, (transport) => transport.request<T>(method, params, requestOptions));
   return {
     request,
     async call(input, requestOptions) {
-      const call = {
-        contract_address: normalizeAddress(input.contractAddress),
-        entry_point_selector: selectorFromName(input.entrypoint),
-        calldata: (input.calldata ?? []).map((value) => normalizeFelt(value)),
-      };
-      return request<string[]>("starknet_call", [call, input.blockId ?? "latest"], requestOptions);
+      return request<string[]>("starknet_call", rpcCallParams(input), requestOptions);
+    },
+    async callMany(inputs, requestOptions) {
+      if (inputs.length === 0) return { data: [], attempts: [] };
+      return execute("starknet_call_batch", requestOptions, (transport) => {
+        if (!transport.callMany) throw new TransportError("starknet-rpc", "RPC endpoint does not support batched calls.");
+        return transport.callMany(inputs, requestOptions);
+      });
     },
     async getClassHashAt(address, requestOptions) {
       const response = await request<string>("starknet_getClassHashAt", ["latest", normalizeAddress(address)], requestOptions);
@@ -517,13 +588,17 @@ export function createFallbackRpcTransport(options: {
   const now = options.now ?? Date.now;
   const cooldownMs = options.cooldownMs ?? 30_000;
   let primaryRetryAt = 0;
-  const request = async <T>(method: string, params?: readonly unknown[] | Record<string, unknown>, requestOptions?: RequestOptions) => {
+  const execute = async <T>(
+    operation: string,
+    requestOptions: RequestOptions | undefined,
+    task: (transport: RpcTransport) => Promise<TransportResult<T>>,
+  ) => {
     if (primary !== fallback && primaryRetryAt > now()) {
-      const result = await fallback.request<T>(method, params, requestOptions);
+      const result = await task(fallback);
       return { ...result, attempts: result.attempts.map((value) => ({ ...value, fallback: true })) };
     }
     try {
-      const result = await primary.request<T>(method, params, requestOptions);
+      const result = await task(primary);
       primaryRetryAt = 0;
       return result;
     } catch (primaryError) {
@@ -536,7 +611,7 @@ export function createFallbackRpcTransport(options: {
         || code.includes("TIMEOUT")
       )) primaryRetryAt = now() + cooldownMs;
       options.logger?.warn?.("Cage Calls RPC fallback selected.", {
-        method,
+        method: operation,
         primaryEndpoint: redactUrl(primaryUrl ?? fallbackUrl),
         fallbackEndpoint: redactUrl(fallbackUrl),
         selectedRole: "fallback",
@@ -545,7 +620,7 @@ export function createFallbackRpcTransport(options: {
         ...(primaryError instanceof TransportError && primaryError.rpcCode !== undefined ? { rpcCode: primaryError.rpcCode } : {}),
       });
       try {
-        const result = await fallback.request<T>(method, params, requestOptions);
+        const result = await task(fallback);
         const fallbackAttempts = result.attempts.map((value) => ({ ...value, fallback: true }));
         return { ...result, attempts: [...attemptsFromError(primaryError), ...fallbackAttempts] };
       } catch (fallbackError) {
@@ -556,24 +631,28 @@ export function createFallbackRpcTransport(options: {
       }
     }
   };
+  const request = <T>(method: string, params?: readonly unknown[] | Record<string, unknown>, requestOptions?: RequestOptions) =>
+    execute(method, requestOptions, (transport) => transport.request<T>(method, params, requestOptions));
 
   return {
     request,
     async call(input, requestOptions) {
       const startedAt = Date.now();
-      const call = {
-        contract_address: normalizeAddress(input.contractAddress),
-        entry_point_selector: selectorFromName(input.entrypoint),
-        calldata: (input.calldata ?? []).map((value) => normalizeFelt(value)),
-      };
       try {
-        const response = await request<string[]>("starknet_call", [call, input.blockId ?? "latest"], requestOptions);
+        const response = await request<string[]>("starknet_call", rpcCallParams(input), requestOptions);
         options.logger?.debug?.("Cage Calls RPC call completed.", rpcCallLogContext(input, startedAt, response.attempts));
         return response;
       } catch (error) {
         options.logger?.debug?.("Cage Calls RPC call failed.", rpcCallLogContext(input, startedAt, attemptsFromError(error), error));
         throw error;
       }
+    },
+    async callMany(inputs, requestOptions) {
+      if (inputs.length === 0) return { data: [], attempts: [] };
+      return execute("starknet_call_batch", requestOptions, (transport) => {
+        if (!transport.callMany) throw new TransportError("starknet-rpc", "RPC endpoint does not support batched calls.");
+        return transport.callMany(inputs, requestOptions);
+      });
     },
     async getClassHashAt(address, requestOptions) {
       const result = await request<string>("starknet_getClassHashAt", ["latest", normalizeAddress(address)], requestOptions);

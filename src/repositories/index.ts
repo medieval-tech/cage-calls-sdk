@@ -26,7 +26,7 @@ import {
 } from "../core/decoders.js";
 import { AllSourcesFailedError, UnsupportedCapabilityError, ValidationError } from "../core/errors.js";
 import type { CapabilityRegistry } from "../network.js";
-import type { RpcTransport, ToriiTransport, TransportResult } from "../transports/index.js";
+import type { RpcCall, RpcTransport, ToriiTransport, TransportResult } from "../transports/index.js";
 import { transportAttemptsFromError } from "../transports/index.js";
 import { readAllToriiModels } from "../transports/torii-models.js";
 import { readToriiFightSnapshots } from "./torii-fights.js";
@@ -1230,6 +1230,49 @@ export interface GachaRepository {
 }
 
 export function createGachaRepository(context: RepositoryContext, tokens: TokensRepository): GachaRepository {
+  const legacyPoolCalls = (fightId: bigint): RpcCall[] => {
+    const calldata = encodeU256(fightId);
+    const contractAddress = context.network.contracts.Gacha;
+    return [
+      { contractAddress, entrypoint: "pool_open", calldata },
+      { contractAddress, entrypoint: "pool_size", calldata },
+      ...Array.from({ length: 7 }, (_, rarity) => [
+        { contractAddress, entrypoint: "pool_available_count", calldata: [...calldata, rarity.toString()] },
+        { contractAddress, entrypoint: "pool_registered_count", calldata: [...calldata, rarity.toString()] },
+        { contractAddress, entrypoint: "expected_count", calldata: [...calldata, rarity.toString()] },
+      ]).flat(),
+    ];
+  };
+
+  const decodeLegacyPool = (fightId: bigint, values: readonly string[][]): GachaPoolState => ({
+    fightId,
+    open: decodeSingleBool(values[0] ?? [], "poolOpen"),
+    size: decodeSingleU256(values[1] ?? [], "poolSize"),
+    rarities: Array.from({ length: 7 }, (_, rarity) => {
+      const offset = 2 + rarity * 3;
+      return {
+        rarity,
+        available: decodeSingleU256(values[offset] ?? [], `poolAvailable[${rarity}]`),
+        registered: decodeSingleU256(values[offset + 1] ?? [], `poolRegistered[${rarity}]`),
+        expected: decodeSingleU256(values[offset + 2] ?? [], `poolExpected[${rarity}]`),
+      };
+    }),
+  });
+
+  const readLegacyPool = async (fightId: bigint, options: RequestOptions) => {
+    const calls = legacyPoolCalls(fightId);
+    if (context.rpc.callMany) {
+      const response = await context.rpc.callMany(calls, options);
+      return { state: decodeLegacyPool(fightId, response.data), attempts: response.attempts };
+    }
+    const responses = await mapConcurrent(calls, resolveRequestBudget(context.budget, options).maxConcurrency, (call) =>
+      context.rpc.call(call, options));
+    return {
+      state: decodeLegacyPool(fightId, responses.map((response) => response.data)),
+      attempts: responses.flatMap((response) => response.attempts),
+    };
+  };
+
   return {
     async pool(fightId, options = {}) {
       const startedAt = context.now();
@@ -1249,20 +1292,33 @@ export function createGachaRepository(context: RepositoryContext, tokens: Tokens
           response.blockNumber,
         );
       }
-      const [open, size] = await Promise.all([
-        rpcCall(context, "Gacha", "pool_open", id, options),
-        rpcCall(context, "Gacha", "pool_size", id, options),
-      ]);
-      return result(context, startedAt, "starknet-rpc", {
-        fightId,
-        open: decodeSingleBool(open.data, "poolOpen"),
-        size: decodeSingleU256(size.data, "poolSize"),
-        rarities: [],
-      }, [...open.attempts, ...size.attempts], false, [{
-        code: "CAPABILITY_FALLBACK",
-        message: "This deployment lacks the aggregate Gacha pool view; open and size were retained without per-rarity RPC fan-out.",
-        source: "starknet-rpc",
-      }]);
+      try {
+        const legacy = await readLegacyPool(fightId, options);
+        const available = legacy.state.rarities.reduce((sum, rarity) => sum + rarity.available, 0n);
+        const countersValid = available === legacy.state.size
+          && legacy.state.rarities.every((rarity) => rarity.available <= rarity.registered && rarity.registered <= rarity.expected);
+        return result(context, startedAt, "starknet-rpc", legacy.state, legacy.attempts, countersValid, countersValid ? [] : [{
+          code: "GACHA_POOL_COUNTER_MISMATCH",
+          message: "Gacha pool counters were read but did not form a consistent snapshot; refresh to retry.",
+          source: "starknet-rpc",
+        }]);
+      } catch (error) {
+        const attempts = transportAttemptsFromError(error);
+        const [open, size] = await Promise.all([
+          rpcCall(context, "Gacha", "pool_open", id, options),
+          rpcCall(context, "Gacha", "pool_size", id, options),
+        ]);
+        return result(context, startedAt, "starknet-rpc", {
+          fightId,
+          open: decodeSingleBool(open.data, "poolOpen"),
+          size: decodeSingleU256(size.data, "poolSize"),
+          rarities: [],
+        }, [...attempts, ...open.attempts, ...size.attempts], false, [{
+          code: "GACHA_POOL_DETAILS_UNAVAILABLE",
+          message: "Gacha rarity counters could not be verified; open and available pool size were retained.",
+          source: "starknet-rpc",
+        }]);
+      }
     },
     async poolStates(fightIds, options = {}) {
       const startedAt = context.now();
@@ -1301,7 +1357,7 @@ export function createGachaRepository(context: RepositoryContext, tokens: Tokens
       }
       if (unique.length !== 1) throw new UnsupportedCapabilityError("Gacha pool batches without get_pool_states");
       const fallback = await createGachaRepository(context, tokens).pool(unique[0]!, options);
-      return result(context, startedAt, "starknet-rpc", [fallback.data], fallback.meta.attempts, false, fallback.meta.warnings);
+      return result(context, startedAt, "starknet-rpc", [fallback.data], fallback.meta.attempts, fallback.meta.complete, fallback.meta.warnings);
     },
     async user(fightId, account, options = {}) {
       const startedAt = context.now();
