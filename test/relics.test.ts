@@ -351,17 +351,19 @@ describe("relic ownership source policy", () => {
     expect(response.data.items.map((relic) => relic.tokenId)).toEqual([2n, 1n]);
     expect(response.data.provenance).toMatchObject({ onchainBalance: 2n, verified: true, ownershipSource: "torii" });
     expect(response.meta.complete).toBe(false);
+    expect(response.meta.warnings.map((warning) => warning.code)).toContain("OWNED_RELIC_HYDRATION_FAILED");
     expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_METADATA_INCOMPLETE");
-    expect(rpc.calls).toEqual([]);
+    expect(rpc.calls.map((call) => call.entrypoint).sort()).toEqual([
+      "get_token_uri",
+      "relic_data",
+    ].sort());
   });
 
-  it("does not hydrate incomplete Torii metadata through RPC", async () => {
+  it("hydrates only incomplete owned Torii metadata through aggregate RPC", async () => {
     const rpc = createMockRpcTransport({
       calls: {
-        balance_of: ["2", "0"],
-        get_relics: (request) => request.calldata?.[0] === "0"
-          ? ["0"]
-          : encodeRelicRows([{ tokenId: 1n, owner }]),
+        max_relic_batch_size: ["20"],
+        get_relics: encodeRelicRows([{ tokenId: 1n, owner }]),
       },
     });
     const torii = createMockToriiTransport({
@@ -376,13 +378,40 @@ describe("relic ownership source policy", () => {
     const metadata = createMockMetadataTransport({
       "ipfs://metadata-1": { name: "Hydrated Relic", image: "ipfs://image", attributes: [{ trait_type: "Power", value: 8 }] },
     });
-    const { preset: _preset, ...probingMainnet } = MAINNET_PRESET;
-    const client = createCageCallsClient({ network: probingMainnet, transports: { rpc, torii, metadata } });
+    const upgradedMainnet = {
+      ...MAINNET_PRESET,
+      capabilities: { ...MAINNET_PRESET.capabilities, relicBatch: true },
+    };
+    const client = createCageCallsClient({ network: upgradedMainnet, transports: { rpc, torii, metadata } });
 
     const response = await client.relics.owned(owner);
 
-    expect(response.data.items.find((relic) => relic.tokenId === 1n)?.name).toBeUndefined();
-    expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_METADATA_INCOMPLETE");
+    expect(response.data.items.find((relic) => relic.tokenId === 1n)).toMatchObject({
+      name: "Hydrated Relic",
+      image: "https://ipfs.test/image",
+    });
+    expect(response.meta.complete).toBe(true);
+    expect(response.meta.warnings.map((warning) => warning.code)).not.toContain("TORII_METADATA_INCOMPLETE");
+    expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["max_relic_batch_size", "get_relics"]);
+    expect(rpc.calls.find((call) => call.entrypoint === "get_relics")?.calldata?.[0]).toBe("1");
+  });
+
+  it("keeps analytics-oriented owned inventory Torii-only when metadata is incomplete", async () => {
+    const rpc = createMockRpcTransport({
+      calls: { get_relics: encodeRelicRows([{ tokenId: 1n, owner }]) },
+    });
+    const torii = createMockToriiTransport({
+      tokenBalances: {
+        totalCount: 1,
+        edges: [{ node: { tokenMetadata: toriiToken(1n, MAINNET_PRESET.contracts.RelicNFT, false) } }],
+      },
+    });
+    const client = createCageCallsClient({ network: "mainnet", transports: { rpc, torii } });
+
+    const response = await client.relics.ownedInventory(owner);
+
+    expect(response.data.items.map((relic) => relic.tokenId)).toEqual([1n]);
+    expect(response.data.provenance).toMatchObject({ ownershipSource: "torii", verified: true });
     expect(rpc.calls).toEqual([]);
   });
 
