@@ -62,7 +62,11 @@ describe("public and account aggregates", () => {
     const striker = feedFight(2n, { hasBought: true, choiceIndex: 1, shares: 10n, boughtAt: 1n, hasRedeemed: true, isWinner: false, strikeTickets: 1n });
     const fights = {
       feedAll: async () => result([winner, striker]),
-      portfolioAll: async () => result([]),
+      portfolioAll: async () => result([
+        { fightId: 1n, buyer: "0xabc", marketId: 1n, choiceIndex: 0, amount: 10n, boughtAt: 1n },
+        { fightId: 2n, buyer: "0xabc", marketId: 2n, choiceIndex: 1, amount: 10n, boughtAt: 1n },
+      ]),
+      feedMany: async () => result([winner, striker]),
     } as unknown as FightsRepository;
     const gacha = {
       pool: async (fightId: bigint) => result({ fightId, open: true, size: 1n, rarities: [] }),
@@ -76,8 +80,6 @@ describe("public and account aggregates", () => {
     expect(portfolio.data.callsBalance).toBe(123n);
     expect(portfolio.data.actions).toEqual([
       { type: "redeem-payout", fightId: 1n },
-      { type: "keep-relic", fightId: 1n, tokenId: 99n },
-      { type: "strike-gacha", fightId: 2n, ticketBalance: 1n },
     ]);
   });
 });

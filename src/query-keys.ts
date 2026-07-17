@@ -26,6 +26,7 @@ export const cageCallsQueryKeys = Object.freeze({
   fightersMany: (fighterIds: readonly bigint[]) => key("fighters", "many", ...fighterIds.map(String)),
   fighter: (fighterId: bigint) => key("fighter", fighterId.toString()),
   fights: (input?: { limit?: number; cursor?: string; seasonId?: bigint }) => key("fights", ...(input ? [input.limit ?? "default", input.cursor ?? "start", input.seasonId?.toString() ?? "all"] : [])),
+  fightsMany: (fightIds: readonly bigint[]) => key("fights", "many", ...fightIds.map(String)),
   fight: (fightId: bigint) => key("fight", fightId.toString()),
   fightFeed: (input?: { limit?: number; cursor?: bigint; viewer?: Address }) => key("fight-feed", input?.limit ?? "default", input?.cursor?.toString() ?? "start", input?.viewer ? normalizeAddress(input.viewer) : "none"),
   fightFeedMany: (fightIds: readonly bigint[], viewer?: Address) => key("fight-feed", "many", ...fightIds.map(String), viewer ? normalizeAddress(viewer) : "none"),

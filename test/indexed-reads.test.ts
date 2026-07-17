@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createCageCallsClient, encodeByteArray, encodeU256, SEPOLIA_DEV_PRESET } from "../src/index.js";
 import { createMockRpcTransport, createMockToriiTransport } from "../src/testing/index.js";
-import { encodeFightBuys, encodeFightFeed } from "./fixtures.js";
+import { encodeFightFeed } from "./fixtures.js";
 
 const fight = {
   fight_id: "84",
@@ -52,6 +52,34 @@ describe("Torii-first indexed reads", () => {
     expect(response.meta.complete).toBe(true);
     expect(response.data.map((fighter) => fighter.fighterId)).toEqual(fighterIds);
     expect(rpc.calls.filter((call) => call.entrypoint === "get_fighters")).toHaveLength(3);
+  });
+
+  it("reads fighter batches from Torii before considering the RPC aggregate", async () => {
+    const rpc = createMockRpcTransport({ calls: { get_fighters: ["0"] } });
+    const torii = createMockToriiTransport({
+      models: {
+        Fighter: {
+          edges: [1n, 2n].map((fighterId) => ({
+            cursor: `fighter-${fighterId}`,
+            node: {
+              fighter_id: fighterId.toString(),
+              name: `Fighter ${fighterId}`,
+              weight_class: "Lightweight",
+              active: true,
+            },
+          })),
+          totalCount: 2,
+          pageInfo: { hasNextPage: false, endCursor: "fighter-2" },
+        },
+      },
+    });
+    const client = createCageCallsClient({ network: SEPOLIA_DEV_PRESET, transports: { rpc, torii } });
+
+    const response = await client.fighters.getMany([2n, 1n]);
+
+    expect(response.meta).toMatchObject({ source: "torii", complete: true });
+    expect(response.data.map((fighter) => fighter.fighterId)).toEqual([2n, 1n]);
+    expect(rpc.calls).toEqual([]);
   });
 
   it("enumerates role models beyond the former one-page limit", async () => {
@@ -119,31 +147,24 @@ describe("Torii-first indexed reads", () => {
     expect(rpc.requests).toEqual([]);
   });
 
-  it("reconstructs a complete analytics snapshot through upgraded RPC views when Torii is unavailable", async () => {
-    const buyer = "0xabc";
+  it("uses one aggregate fight read without expanding analytics through per-fight RPC calls", async () => {
     const rpc = createMockRpcTransport({
       calls: {
         get_fight_feed: encodeFightFeed([{ fightId: 84n, marketId: 900n, settled: true, winnerIndex: 1 }]),
-        fight_buy_count: ["1"],
-        get_fight_buys: encodeFightBuys([{
-          fightId: 84n,
-          buyer,
-          marketId: 900n,
-          choiceIndex: 1,
-          amount: 100n,
-          boughtAt: 1_700_000_010n,
-        }]),
       },
     });
     const client = createCageCallsClient({ network: SEPOLIA_DEV_PRESET, transports: { rpc } });
 
     const response = await client.analytics.snapshot();
 
-    expect(response.meta).toMatchObject({ source: "starknet-rpc", complete: true });
+    expect(response.meta).toMatchObject({ source: "starknet-rpc", complete: false });
     expect(response.data.fights.map((item) => item.fightId)).toEqual([84n]);
-    expect(response.data.buys).toEqual([expect.objectContaining({ fightId: 84n, buyer, amount: 100n })]);
+    expect(response.data.buys).toEqual([]);
     expect(response.data.winnerChoiceByFight).toEqual({ "84": 1 });
-    expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["get_fight_feed", "fight_buy_count", "get_fight_buys"]);
+    expect(response.meta.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "ANALYTICS_BUYS_UNAVAILABLE" }),
+    ]));
+    expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["get_fight_feed"]);
   });
 
   it("uses the aggregate fight feed for exhaustive fight fallback", async () => {
@@ -164,7 +185,7 @@ describe("Torii-first indexed reads", () => {
     expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["get_fight_feed"]);
   });
 
-  it("reuses an indexed fight buy group once its RPC count is verified", async () => {
+  it("retains a partial indexed fight buy group without RPC verification", async () => {
     const rpc = createMockRpcTransport({ calls: { fight_buy_count: ["1"] } });
     const torii = createMockToriiTransport({
       models: {
@@ -191,9 +212,12 @@ describe("Torii-first indexed reads", () => {
 
     const response = await client.analytics.snapshot({ traversal: { maxToriiPages: 1 } });
 
-    expect(response.meta).toMatchObject({ source: "starknet-rpc", complete: true });
+    expect(response.meta).toMatchObject({ source: "torii", complete: false });
     expect(response.data.buys).toHaveLength(1);
-    expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["fight_buy_count"]);
+    expect(response.meta.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "TORII_ANALYTICS_PARTIAL" }),
+    ]));
+    expect(rpc.calls).toEqual([]);
   });
 
   it("joins market, fight, and vault models without making RPC calls", async () => {

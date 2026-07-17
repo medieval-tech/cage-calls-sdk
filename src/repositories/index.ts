@@ -1,5 +1,5 @@
 import { createDataResult, mapConcurrent, resolveRequestBudget } from "../core/request.js";
-import { clampPageSize, encodeU256, normalizeAddress, normalizeFelt } from "../core/codecs.js";
+import { clampPageSize, encodeU256, normalizeAddress, normalizeU256, sameAddress } from "../core/codecs.js";
 import {
   decodeFightBuyRpc,
   decodeFightBuysRpc,
@@ -29,6 +29,7 @@ import type { CapabilityRegistry } from "../network.js";
 import type { RpcTransport, ToriiTransport, TransportResult } from "../transports/index.js";
 import { transportAttemptsFromError } from "../transports/index.js";
 import { readAllToriiModels } from "../transports/torii-models.js";
+import { readToriiFightSnapshots } from "./torii-fights.js";
 import type {
   Address,
   CageCallsNetwork,
@@ -46,6 +47,7 @@ import type {
   GachaPoolState,
   GachaUserState,
   GachaUserStates,
+  IndexedTokenBalance,
   Market,
   MarketCatalogItem,
   MarketPosition,
@@ -109,6 +111,9 @@ const MARKET_SELECTION = [
 ] as const;
 const VAULT_NUMERATOR_SELECTION = ["market_id", "index", "value"] as const;
 const VAULT_DENOMINATOR_SELECTION = ["market_id", "value"] as const;
+const PAYOUT_NUMERATOR_SELECTION = ["condition_id", "index", "value"] as const;
+const PAYOUT_DENOMINATOR_SELECTION = ["condition_id", "value"] as const;
+const MARKET_POSITION_SELECTION = ["position_id", "market_id", "index"] as const;
 
 export interface FightersRepository {
   get(fighterId: bigint, options?: RequestOptions): Promise<DataResult<Fighter>>;
@@ -125,30 +130,22 @@ export function createFightersRepository(context: RepositoryContext): FightersRe
     if (fighterId <= 0n) throw new ValidationError("fighterId must be greater than zero.");
     const startedAt = context.now();
     const calldata = encodeU256(fighterId);
-    try {
-      const response = await rpcCall(context, "FighterRegistry", "get_fighter", calldata, options);
-      return result(context, startedAt, "starknet-rpc", decodeFighterRpc(response.data), response.attempts, true, [], response.blockNumber);
-    } catch (rpcError) {
-      const attempts = transportAttemptsFromError(rpcError);
-      if (!context.torii) throw new AllSourcesFailedError("fighters.get", attempts);
+    if (context.torii) {
       try {
         const response = await context.torii.model<Record<string, unknown>>({
           model: "Fighter",
           selection: FIGHTER_SELECTION,
           first: 1,
-          where: { fighter_idEQ: normalizeFelt(fighterId) },
+          where: { fighter_idEQ: normalizeU256(fighterId, "fighterId") },
         }, options);
         const node = response.data.edges[0]?.node;
-        if (!node) throw new AllSourcesFailedError("fighters.get", [...attempts, ...response.attempts]);
-        return result(context, startedAt, "torii", mapToriiFighter(node), [...attempts, ...response.attempts], false, [{
-          code: "RPC_VERIFICATION_UNAVAILABLE",
-          message: "Fighter was returned by Torii but could not be verified through RPC.",
-          source: "starknet-rpc",
-        }]);
-      } catch (toriiError) {
-        throw new AllSourcesFailedError("fighters.get", [...attempts, ...transportAttemptsFromError(toriiError)]);
+        if (node) return result(context, startedAt, "torii", mapToriiFighter(node), response.attempts);
+      } catch {
+        // The exact contract view is the bounded fallback when Torii is unavailable.
       }
     }
+    const response = await rpcCall(context, "FighterRegistry", "get_fighter", calldata, options);
+    return result(context, startedAt, "starknet-rpc", decodeFighterRpc(response.data), response.attempts, true, [], response.blockNumber);
   };
 
   const page = async (input: { active?: boolean; limit?: number; cursor?: string } = {}, options: RequestOptions = {}) => {
@@ -178,10 +175,35 @@ export function createFightersRepository(context: RepositoryContext): FightersRe
       const startedAt = context.now();
       const unique = Array.from(new Set(fighterIds));
       if (unique.length === 0) return result(context, startedAt, "derived", [], []);
+      const attempts: SourceAttempt[] = [];
+      if (context.torii) {
+        try {
+          const response = await readAllToriiModels(context, {
+            model: "Fighter",
+            selection: FIGHTER_SELECTION,
+            where: { fighter_idIN: unique.map((fighterId) => normalizeU256(fighterId, "fighterId")) },
+          }, mapToriiFighter, options);
+          const byId = new Map(response.items.map((fighter) => [fighter.fighterId.toString(), fighter]));
+          const ordered = unique.flatMap((fighterId) => {
+            const fighter = byId.get(fighterId.toString());
+            return fighter ? [fighter] : [];
+          });
+          return result(
+            context,
+            startedAt,
+            "torii",
+            ordered,
+            response.attempts,
+            response.complete && ordered.length === unique.length,
+            response.warnings,
+          );
+        } catch (error) {
+          attempts.push(...transportAttemptsFromError(error));
+        }
+      }
       const supportsBatch = context.capabilities.has("fighterBatch") || await context.capabilities.probe("fighterBatch", options.signal);
       if (supportsBatch) {
         const fighters: Fighter[] = [];
-        const attempts: SourceAttempt[] = [];
         for (let index = 0; index < unique.length; index += 20) {
           const chunk = unique.slice(index, index + 20);
           const calldata = [chunk.length.toString(), ...chunk.flatMap(encodeU256)];
@@ -197,7 +219,7 @@ export function createFightersRepository(context: RepositoryContext): FightersRe
         startedAt,
         values.some((value) => value.meta.source === "starknet-rpc") ? "starknet-rpc" : "torii",
         values.map((value) => value.data),
-        values.flatMap((value) => value.meta.attempts),
+        [...attempts, ...values.flatMap((value) => value.meta.attempts)],
         values.every((value) => value.meta.complete),
         values.flatMap((value) => value.meta.warnings),
       );
@@ -228,6 +250,7 @@ export function createFightersRepository(context: RepositoryContext): FightersRe
 
 export interface FightsRepository {
   get(fightId: bigint, options?: RequestOptions): Promise<DataResult<Fight>>;
+  getMany(fightIds: readonly bigint[], options?: RequestOptions): Promise<DataResult<Fight[]>>;
   all(input?: { seasonId?: bigint }, options?: RequestOptions): Promise<DataResult<Fight[]>>;
   page(input?: { limit?: number; cursor?: string; seasonId?: bigint }, options?: RequestOptions): Promise<DataResult<Page<Fight>>>;
   /** @deprecated Use page(). */
@@ -249,6 +272,20 @@ export interface FightsRepository {
 export function createFightsRepository(context: RepositoryContext): FightsRepository {
   const get = async (fightId: bigint, options: RequestOptions = {}) => {
     const startedAt = context.now();
+    if (context.torii) {
+      try {
+        const response = await context.torii.model<Record<string, unknown>>({
+          model: "Fight",
+          selection: FIGHT_SELECTION,
+          first: 1,
+          where: { fight_idEQ: normalizeU256(fightId, "fightId") },
+        }, options);
+        const node = response.data.edges[0]?.node;
+        if (node) return result(context, startedAt, "torii", mapToriiFight(node), response.attempts);
+      } catch {
+        // The exact RPC view is the bounded fallback for an unavailable Torii read.
+      }
+    }
     const response = await rpcCall(context, "FightFactory", "fight", encodeU256(fightId), options);
     return result(context, startedAt, "starknet-rpc", decodeFightRpc(response.data), response.attempts, true, [], response.blockNumber);
   };
@@ -263,7 +300,7 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
           selection: FIGHT_SELECTION,
           first: clampPageSize(input.limit, context.budget.pageSize, 20),
           ...(input.cursor ? { after: input.cursor } : {}),
-          ...(input.seasonId === undefined ? {} : { where: { season_idEQ: normalizeFelt(input.seasonId) } }),
+          ...(input.seasonId === undefined ? {} : { where: { season_idEQ: normalizeU256(input.seasonId, "seasonId") } }),
         }, options);
         const items = response.data.edges.map((edge) => mapToriiFight(edge.node)).sort((a, b) => a.createdAt > b.createdAt ? -1 : 1);
         return result(context, startedAt, "torii", {
@@ -276,29 +313,46 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
       }
     }
 
-    const size = clampPageSize(input.limit, 20, 20);
-    const nextIdResponse = await rpcCall(context, "FightFactory", "next_fight_id", [], options).catch((error) => {
-      throw new AllSourcesFailedError("fights.list", [...attempts, ...transportAttemptsFromError(error)]);
-    });
-    attempts.push(...nextIdResponse.attempts);
-    const nextId = decodeSingleU256(nextIdResponse.data, "nextFightId");
-    let cursor = input.cursor ? BigInt(input.cursor) : nextId > 0n ? nextId - 1n : 0n;
-    const ids: bigint[] = [];
-    while (cursor > 0n && ids.length < size) ids.push(cursor--);
-    const fights = await mapConcurrent(ids, context.budget.maxConcurrency, async (id) => {
-      const value = await get(id, options);
-      attempts.push(...value.meta.attempts);
-      return value.data;
-    });
+    const supportsFeed = context.capabilities.has("fightFeed") || await context.capabilities.probe("fightFeed", options.signal);
+    if (!supportsFeed) throw new UnsupportedCapabilityError("fight pagination without Torii or get_fight_feed");
+    const feed = await createFightsRepository(context).feed({
+      limit: clampPageSize(input.limit, 20, 20),
+      ...(input.cursor ? { cursor: BigInt(input.cursor) } : {}),
+    }, options);
+    attempts.push(...feed.meta.attempts);
     return result(context, startedAt, "starknet-rpc", {
-      items: input.seasonId === undefined ? fights : fights.filter((fight) => fight.seasonId === input.seasonId),
-      ...(cursor > 0n ? { cursor: cursor.toString() } : {}),
-      hasMore: cursor > 0n,
-    }, attempts, false, [{ code: "TORII_FALLBACK", message: "Fight enumeration used bounded singleton RPC reads.", source: "starknet-rpc" }]);
+      items: input.seasonId === undefined ? feed.data.items : feed.data.items.filter((fight) => fight.seasonId === input.seasonId),
+      ...(feed.data.cursor === undefined ? {} : { cursor: feed.data.cursor.toString() }),
+      hasMore: feed.data.hasMore,
+    }, attempts, feed.meta.complete, feed.meta.warnings);
   };
 
   return {
     get,
+    async getMany(fightIds, options = {}) {
+      const startedAt = context.now();
+      const unique = Array.from(new Set(fightIds.map(String))).map(BigInt);
+      if (unique.length === 0) return result(context, startedAt, "torii", [], []);
+      if (context.torii) {
+        try {
+          const response = await readAllToriiModels(context, {
+            model: "Fight",
+            selection: FIGHT_SELECTION,
+            where: { fight_idIN: unique.map((fightId) => normalizeU256(fightId, "fightId")) },
+          }, mapToriiFight, options);
+          const byId = new Map(response.items.map((fight) => [fight.fightId.toString(), fight]));
+          const ordered = unique.flatMap((fightId) => {
+            const fight = byId.get(fightId.toString());
+            return fight ? [fight] : [];
+          });
+          return result(context, startedAt, "torii", ordered, response.attempts, response.complete && ordered.length === unique.length, response.warnings);
+        } catch {
+          // The aggregate fight snapshot view is the only RPC fallback.
+        }
+      }
+      const snapshots = await createFightsRepository(context).feedMany(unique, {}, options);
+      return result(context, startedAt, snapshots.meta.source, snapshots.data, snapshots.meta.attempts, snapshots.meta.complete, snapshots.meta.warnings);
+    },
     async all(input = {}, options = {}) {
       const startedAt = context.now();
       const attempts: SourceAttempt[] = [];
@@ -308,7 +362,7 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
           const response = await readAllToriiModels(context, {
             model: "Fight",
             selection: FIGHT_SELECTION,
-            ...(input.seasonId === undefined ? {} : { where: { season_idEQ: normalizeFelt(input.seasonId) } }),
+            ...(input.seasonId === undefined ? {} : { where: { season_idEQ: normalizeU256(input.seasonId, "seasonId") } }),
           }, mapToriiFight, options);
           return result(context, startedAt, "torii", response.items.sort((a, b) => a.createdAt === b.createdAt ? 0 : a.createdAt > b.createdAt ? -1 : 1), response.attempts, response.complete, response.warnings);
         } catch (error) {
@@ -326,22 +380,7 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
           .sort((a, b) => a.createdAt === b.createdAt ? 0 : a.createdAt > b.createdAt ? -1 : 1);
         return result(context, startedAt, "starknet-rpc", items, attempts, response.meta.complete, warnings);
       }
-      const budget = resolveRequestBudget(context.budget, options);
-      const next = await rpcCall(context, "FightFactory", "next_fight_id", [], options).catch((error) => {
-        throw new AllSourcesFailedError("fights.all", [...attempts, ...transportAttemptsFromError(error)]);
-      });
-      attempts.push(...next.attempts);
-      const nextId = decodeSingleU256(next.data, "nextFightId");
-      const ids: bigint[] = [];
-      for (let id = 1n; id < nextId && ids.length < budget.maxRpcItems; id += 1n) ids.push(id);
-      const values = await mapConcurrent(ids, context.budget.maxConcurrency, (id) => get(id, options));
-      attempts.push(...values.flatMap((value) => value.meta.attempts));
-      const items = values.map((value) => value.data)
-        .filter((fight) => input.seasonId === undefined || fight.seasonId === input.seasonId)
-        .sort((a, b) => a.createdAt === b.createdAt ? 0 : a.createdAt > b.createdAt ? -1 : 1);
-      const complete = BigInt(ids.length) === (nextId > 0n ? nextId - 1n : 0n);
-      if (!complete) warnings.push({ code: "RPC_ITEM_LIMIT", message: `Fight enumeration reached the ${budget.maxRpcItems} item budget.`, source: "starknet-rpc" });
-      return result(context, startedAt, "starknet-rpc", items, attempts, complete, warnings);
+      throw new UnsupportedCapabilityError("fight enumeration without Torii or get_fight_feed");
     },
     page: list,
     list,
@@ -354,54 +393,66 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
       }))).map(BigInt);
       if (unique.length === 0) return result(context, startedAt, "derived", [], []);
       if (unique.length > budget.maxRpcItems) {
-        throw new ValidationError(`fightIds exceeds the ${budget.maxRpcItems} RPC item budget.`);
+        throw new ValidationError(`fightIds exceeds the ${budget.maxRpcItems} item budget.`);
       }
 
       const viewer = normalizeAddress(input.viewer ?? "0x0");
-      const attempts: SourceAttempt[] = [];
-      const warnings: DataWarning[] = [];
-      const rows: FightFeedItem[] = [];
-      const supported = context.capabilities.has("fightFeedByIds")
-        || await context.capabilities.probe("fightFeedByIds", options.signal);
-
-      if (supported) {
-        for (let offset = 0; offset < unique.length; offset += 20) {
-          const ids = unique.slice(offset, offset + 20);
-          const response = await rpcCall(context, "FightFactory", "get_fight_feed_by_ids", [
-            ids.length.toString(),
-            ...ids.flatMap(encodeU256),
-            viewer,
-          ], options);
-          attempts.push(...response.attempts);
-          rows.push(...decodeFightFeedRpc(response.data));
+      if (context.torii) {
+        try {
+          return await readToriiFightSnapshots(context, unique, viewer, options);
+        } catch (toriiError) {
+          const supported = context.capabilities.has("fightFeedByIds")
+            || await context.capabilities.probe("fightFeedByIds", options.signal);
+          if (!supported) throw new AllSourcesFailedError("fights.feedMany", transportAttemptsFromError(toriiError));
+          const rows: FightFeedItem[] = [];
+          const rpcAttempts: SourceAttempt[] = [];
+          for (let offset = 0; offset < unique.length; offset += 20) {
+            const ids = unique.slice(offset, offset + 20);
+            const response = await rpcCall(context, "FightFactory", "get_fight_feed_by_ids", [
+              ids.length.toString(),
+              ...ids.flatMap(encodeU256),
+              viewer,
+            ], options);
+            rpcAttempts.push(...response.attempts);
+            rows.push(...decodeFightFeedRpc(response.data));
+          }
+          const byId = new Map(rows.map((row) => [row.fightId.toString(), row]));
+          const ordered = unique.flatMap((fightId) => {
+            const row = byId.get(fightId.toString());
+            return row ? [row] : [];
+          });
+          return result(context, startedAt, "starknet-rpc", ordered, [
+            ...transportAttemptsFromError(toriiError),
+            ...rpcAttempts,
+          ], false, [{
+            code: "TORII_FALLBACK",
+            message: "Exact fight snapshots used the bounded aggregate RPC view because Torii was unavailable.",
+            source: "starknet-rpc",
+          }]);
         }
-      } else {
-        const fallback = await mapConcurrent(unique, budget.maxConcurrency, async (fightId) => {
-          const page = await createFightsRepository(context).feed({ cursor: fightId, limit: 1, ...(input.viewer ? { viewer: input.viewer } : {}) }, options);
-          return { row: page.data.items.find((item) => item.fightId === fightId), meta: page.meta };
-        });
-        attempts.push(...fallback.flatMap((value) => value.meta.attempts));
-        warnings.push(...fallback.flatMap((value) => value.meta.warnings));
-        rows.push(...fallback.flatMap((value) => value.row ? [value.row] : []));
-        warnings.push({
-          code: "CAPABILITY_FALLBACK",
-          message: "Exact fight batches used bounded per-fight feed reads because get_fight_feed_by_ids is unavailable.",
-          source: "starknet-rpc",
-        });
       }
 
+      const supported = context.capabilities.has("fightFeedByIds")
+        || await context.capabilities.probe("fightFeedByIds", options.signal);
+      if (!supported) throw new UnsupportedCapabilityError("exact fight snapshots without Torii or get_fight_feed_by_ids");
+      const rows: FightFeedItem[] = [];
+      const rpcAttempts: SourceAttempt[] = [];
+      for (let offset = 0; offset < unique.length; offset += 20) {
+        const ids = unique.slice(offset, offset + 20);
+        const response = await rpcCall(context, "FightFactory", "get_fight_feed_by_ids", [
+          ids.length.toString(),
+          ...ids.flatMap(encodeU256),
+          viewer,
+        ], options);
+        rpcAttempts.push(...response.attempts);
+        rows.push(...decodeFightFeedRpc(response.data));
+      }
       const byId = new Map(rows.map((row) => [row.fightId.toString(), row]));
       const ordered = unique.flatMap((fightId) => {
         const row = byId.get(fightId.toString());
         return row ? [row] : [];
       });
-      const complete = ordered.length === unique.length;
-      if (!complete) warnings.push({
-        code: "PARTIAL_AGGREGATE",
-        message: `Fight batch returned ${ordered.length} of ${unique.length} requested fights.`,
-        source: "starknet-rpc",
-      });
-      return result(context, startedAt, "starknet-rpc", ordered, attempts, complete && supported, warnings);
+      return result(context, startedAt, "starknet-rpc", ordered, rpcAttempts, ordered.length === unique.length);
     },
     async feedAll(input = {}, options = {}) {
       const startedAt = context.now();
@@ -444,13 +495,36 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
           source: "starknet-rpc",
         });
       }
-      return result(context, startedAt, "starknet-rpc", items, attempts, complete && exhausted, warnings);
+      return result(context, startedAt, attempts.some((attempt) => attempt.source === "starknet-rpc") ? "starknet-rpc" : "torii", items, attempts, complete && exhausted, warnings);
     },
     async feed(input = {}, options = {}) {
       const startedAt = context.now();
-      const supported = context.capabilities.has("fightFeed") || await context.capabilities.probe("fightFeed", options.signal);
       const size = clampPageSize(input.limit, 20, 20);
       const viewer = normalizeAddress(input.viewer ?? "0x0");
+      if (context.torii) {
+        try {
+          const start = input.cursor ?? 0n;
+          const response = await context.torii.model<Record<string, unknown>>({
+            model: "Fight",
+            selection: FIGHT_SELECTION,
+            first: size,
+            ...(start > 0n ? { where: { fight_idLTE: normalizeU256(start, "fight cursor") } } : {}),
+            order: { field: "FIGHT_ID", direction: "DESC" },
+          }, options);
+          const ids = response.data.edges.map((edge) => scalarBigInt(edge.node.fight_id, "fight_id"));
+          const snapshots = await readToriiFightSnapshots(context, ids, viewer, options);
+          const oldest = ids.at(-1) ?? 0n;
+          const cursor = oldest > 1n ? oldest - 1n : 0n;
+          return result(context, startedAt, "torii", {
+            items: snapshots.data,
+            cursor,
+            hasMore: response.data.pageInfo.hasNextPage && cursor > 0n,
+          }, [...response.attempts, ...snapshots.meta.attempts], snapshots.meta.complete, snapshots.meta.warnings);
+        } catch {
+          // Only the aggregate feed view may be used as an RPC fallback.
+        }
+      }
+      const supported = context.capabilities.has("fightFeed") || await context.capabilities.probe("fightFeed", options.signal);
       if (supported) {
         const start = input.cursor ?? 0n;
         const response = await rpcCall(context, "FightFactory", "get_fight_feed", [
@@ -463,77 +537,31 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
         const cursor = oldest > 1n ? oldest - 1n : 0n;
         return result(context, startedAt, "starknet-rpc", { items, cursor, hasMore: items.length === size && cursor > 0n }, response.attempts);
       }
-
-      const attempts: SourceAttempt[] = [];
-      let cursor = input.cursor ?? 0n;
-      if (cursor === 0n) {
-        const next = await rpcCall(context, "FightFactory", "next_fight_id", [], options);
-        attempts.push(...next.attempts);
-        const nextId = decodeSingleU256(next.data, "nextFightId");
-        cursor = nextId > 0n ? nextId - 1n : 0n;
-      }
-      const ids: bigint[] = [];
-      while (cursor > 0n && ids.length < size) ids.push(cursor--);
-      const markets = createMarketsRepository(context);
-      const items = await mapConcurrent(ids, context.budget.maxConcurrency, async (fightId): Promise<FightFeedItem> => {
-        const fightResult = await get(fightId, options);
-        const marketResult = await markets.get(fightResult.data.marketId, options);
-        const [stateResult, potResult, viewerResult] = await Promise.all([
-          markets.state(marketResult.data.marketId, marketResult.data.outcomeSlotCount, marketResult.data.conditionId, options),
-          createFightsRepository(context).potState(fightId, options),
-          viewer === normalizeAddress("0")
-            ? Promise.resolve(result(context, startedAt, "derived", {
-                hasBought: false,
-                shares: 0n,
-                boughtAt: 0n,
-              hasRedeemed: false,
-              isWinner: false,
-              previewStrikeTickets: 0n,
-              strikeTickets: 0n,
-              }, []))
-            : createFightsRepository(context).viewerState(fightId, viewer, options),
-        ]);
-        attempts.push(
-          ...fightResult.meta.attempts,
-          ...marketResult.meta.attempts,
-          ...stateResult.meta.attempts,
-          ...potResult.meta.attempts,
-          ...viewerResult.meta.attempts,
-        );
-        const market = marketResult.data;
-        return {
-          ...fightResult.data,
-          marketCreatedAt: market.createdAt,
-          conditionId: market.conditionId,
-          oracle: market.oracle,
-          outcomeSlotCount: market.outcomeSlotCount,
-          collateralToken: market.collateralToken,
-          startAt: market.startAt ?? 0n,
-          endAt: market.endAt ?? 0n,
-          resolveAt: market.resolveAt ?? 0n,
-          resolvedAt: market.resolvedAt ?? 0n,
-          vaultNumerators: stateResult.data.vaultNumerators,
-          vaultDenominator: stateResult.data.vaultDenominator,
-          outcomeCounts: [],
-          outcomeShares: stateResult.data.outcomeShares ?? [],
-          payoutNumerators: stateResult.data.payoutNumerators,
-          payoutDenominator: stateResult.data.payoutDenominator,
-          pot: potResult.data,
-          viewer: viewerResult.data,
-        };
-      });
-      return result(context, startedAt, "starknet-rpc", {
-        items,
-        cursor,
-        hasMore: ids.length === size && cursor > 0n,
-      }, attempts, false, [{
-        code: "AGGREGATE_VIEW_FALLBACK",
-        message: "Fight feed used bounded singleton RPC views because the aggregate view is unavailable.",
-        source: "starknet-rpc",
-      }]);
+      throw new UnsupportedCapabilityError("fight feed without Torii or get_fight_feed");
     },
     async accountFeed(account, input = {}, options = {}) {
       const startedAt = context.now();
+      if (context.torii) {
+        try {
+          const portfolio = await createFightsRepository(context).portfolioAll(account, options);
+          const size = clampPageSize(input.limit, 20, 20);
+          const ordered = portfolio.data
+            .slice()
+            .sort((left, right) => left.fightId === right.fightId ? 0 : left.fightId > right.fightId ? -1 : 1)
+            .filter((buy) => input.cursor === undefined || input.cursor === 0n || buy.fightId <= input.cursor);
+          const buys = ordered.slice(0, size);
+          const snapshots = await readToriiFightSnapshots(context, buys.map((buy) => buy.fightId), normalizeAddress(account), options);
+          const hasMore = ordered.length > buys.length;
+          const oldest = buys.at(-1)?.fightId ?? 0n;
+          return result(context, startedAt, "torii", {
+            items: snapshots.data,
+            ...(hasMore && oldest > 1n ? { cursor: oldest - 1n } : {}),
+            hasMore,
+          }, [...portfolio.meta.attempts, ...snapshots.meta.attempts], portfolio.meta.complete && snapshots.meta.complete, [...portfolio.meta.warnings, ...snapshots.meta.warnings]);
+        } catch {
+          // Only the aggregate account feed may be used as an RPC fallback.
+        }
+      }
       const supported = context.capabilities.has("accountFightFeed")
         || await context.capabilities.probe("accountFightFeed", options.signal);
       if (!supported) throw new UnsupportedCapabilityError("account fight feed");
@@ -580,7 +608,7 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
         message: "Account fight feed stopped at the configured traversal budget.",
         source: "starknet-rpc",
       });
-      return result(context, startedAt, "starknet-rpc", items, attempts, exhausted, warnings);
+      return result(context, startedAt, attempts.some((attempt) => attempt.source === "starknet-rpc") ? "starknet-rpc" : "torii", items, attempts, exhausted, warnings);
     },
     async buys(fightId, input = {}, options = {}) {
       const startedAt = context.now();
@@ -588,44 +616,48 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
       if (!Number.isSafeInteger(offset) || offset < 0) throw new ValidationError("offset must be a non-negative safe integer.");
       const size = clampPageSize(input.limit, 100, 100);
       const attempts: SourceAttempt[] = [];
-      const supported = context.capabilities.has("fightBuyPagination") || await context.capabilities.probe("fightBuyPagination", options.signal);
-      if (supported) {
-        const [rows, count] = await Promise.all([
-          rpcCall(context, "FightFactory", "get_fight_buys", [...encodeU256(fightId), offset.toString(), size.toString()], options),
-          rpcCall(context, "FightFactory", "fight_buy_count", encodeU256(fightId), options),
-        ]);
-        attempts.push(...rows.attempts, ...count.attempts);
-        const items = decodeFightBuysRpc(rows.data);
-        const total = decodeSingleNumber(count.data, "fightBuyCount");
-        return result(context, startedAt, "starknet-rpc", {
-          items,
-          ...(offset + items.length < total ? { cursor: offset + items.length } : {}),
-          hasMore: offset + items.length < total,
-        }, attempts);
+      if (context.torii) {
+        try {
+          const budget = resolveRequestBudget(context.budget, options);
+          const requestedEnd = offset + size;
+          const fetchSize = Math.min(requestedEnd, budget.maxToriiItems);
+          const response = await context.torii.model<Record<string, unknown>>({
+            model: "FightBuy",
+            selection: FIGHT_BUY_SELECTION,
+            first: Math.max(1, fetchSize),
+            where: { fight_idEQ: normalizeU256(fightId, "fightId") },
+          }, options);
+          const items = response.data.edges.slice(offset, requestedEnd).map((edge) => mapToriiFightBuy(edge.node));
+          const nextOffset = offset + items.length;
+          const hasMore = nextOffset < response.data.totalCount;
+          const budgetCapped = requestedEnd > budget.maxToriiItems;
+          return result(context, startedAt, "torii", {
+            items,
+            ...(hasMore && items.length > 0 ? { cursor: nextOffset } : {}),
+            hasMore,
+          }, response.attempts, !budgetCapped, budgetCapped ? [{
+            code: "BUDGET_LIMIT",
+            message: `Fight buy pagination is capped at ${budget.maxToriiItems} Torii records.`,
+            source: "torii",
+          }] : []);
+        } catch (error) {
+          attempts.push(...transportAttemptsFromError(error));
+        }
       }
-      if (!context.torii) throw new UnsupportedCapabilityError("fight buy enumeration");
-      const budget = resolveRequestBudget(context.budget, options);
-      const requestedEnd = offset + size;
-      const fetchSize = Math.min(requestedEnd, budget.maxToriiItems);
-      const response = await context.torii.model<Record<string, unknown>>({
-        model: "FightBuy",
-        selection: FIGHT_BUY_SELECTION,
-        first: Math.max(1, fetchSize),
-        where: { fight_idEQ: normalizeFelt(fightId) },
-      }, options);
-      const items = response.data.edges.slice(offset, requestedEnd).map((edge) => mapToriiFightBuy(edge.node));
-      const nextOffset = offset + items.length;
-      const hasMore = nextOffset < response.data.totalCount;
-      const budgetCapped = requestedEnd > budget.maxToriiItems;
-      return result(context, startedAt, "torii", {
+      const supported = context.capabilities.has("fightBuyPagination") || await context.capabilities.probe("fightBuyPagination", options.signal);
+      if (!supported) throw new UnsupportedCapabilityError("fight buy enumeration without Torii or get_fight_buys");
+      const [rows, count] = await Promise.all([
+        rpcCall(context, "FightFactory", "get_fight_buys", [...encodeU256(fightId), offset.toString(), size.toString()], options),
+        rpcCall(context, "FightFactory", "fight_buy_count", encodeU256(fightId), options),
+      ]);
+      attempts.push(...rows.attempts, ...count.attempts);
+      const items = decodeFightBuysRpc(rows.data);
+      const total = decodeSingleNumber(count.data, "fightBuyCount");
+      return result(context, startedAt, "starknet-rpc", {
         items,
-        ...(hasMore && items.length > 0 ? { cursor: nextOffset } : {}),
-        hasMore,
-      }, response.attempts, !budgetCapped, budgetCapped ? [{
-        code: "BUDGET_LIMIT",
-        message: `Fight buy pagination is capped at ${budget.maxToriiItems} Torii records.`,
-        source: "torii",
-      }] : []);
+        ...(offset + items.length < total ? { cursor: offset + items.length } : {}),
+        hasMore: offset + items.length < total,
+      }, attempts, false, [{ code: "TORII_FALLBACK", message: "Fight buys used the bounded aggregate RPC fallback.", source: "starknet-rpc" }]);
     },
     async buysAll(fightId, options = {}) {
       const startedAt = context.now();
@@ -636,7 +668,7 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
           const response = await readAllToriiModels(context, {
             model: "FightBuy",
             selection: FIGHT_BUY_SELECTION,
-            where: { fight_idEQ: normalizeFelt(fightId) },
+            where: { fight_idEQ: normalizeU256(fightId, "fightId") },
           }, mapToriiFightBuy, options);
           return result(context, startedAt, "torii", response.items, response.attempts, response.complete, response.warnings);
         } catch (error) {
@@ -666,6 +698,15 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
     },
     async viewerState(fightId, viewer, options = {}) {
       const startedAt = context.now();
+      if (context.torii) {
+        try {
+          const snapshots = await readToriiFightSnapshots(context, [fightId], normalizeAddress(viewer), options);
+          const snapshot = snapshots.data[0];
+          if (snapshot) return result(context, startedAt, "torii", snapshot.viewer, snapshots.meta.attempts, snapshots.meta.complete, snapshots.meta.warnings);
+        } catch {
+          // Direct views below hydrate state only when Torii is unavailable.
+        }
+      }
       const calldata = [...encodeU256(fightId), normalizeAddress(viewer)];
       const [bought, choice, redeemed, tickets, buy] = await Promise.all([
         rpcCall(context, "FightFactory", "has_bought", calldata, options),
@@ -691,6 +732,15 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
     },
     async potState(fightId, options = {}) {
       const startedAt = context.now();
+      if (context.torii) {
+        try {
+          const snapshots = await readToriiFightSnapshots(context, [fightId], normalizeAddress("0"), options);
+          const snapshot = snapshots.data[0];
+          if (snapshot) return result(context, startedAt, "torii", snapshot.pot, snapshots.meta.attempts, snapshots.meta.complete, snapshots.meta.warnings);
+        } catch {
+          // Direct views below hydrate state only when Torii is unavailable.
+        }
+      }
       const calldata = encodeU256(fightId);
       const [winner, winners, total, claimed] = await Promise.all([
         rpcCall(context, "FightFactory", "fight_winner_index", calldata, options),
@@ -710,6 +760,20 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
     },
     async winner(fightId, account, options = {}) {
       const startedAt = context.now();
+      if (context.torii) {
+        try {
+          const response = await context.torii.model<Record<string, unknown>>({
+            model: "FightWinner",
+            selection: FIGHT_WINNER_SELECTION,
+            first: 1,
+            where: { fight_idEQ: normalizeU256(fightId, "fightId"), winnerEQ: normalizeAddress(account) },
+          }, options);
+          const node = response.data.edges[0]?.node;
+          return result(context, startedAt, "torii", node ? mapToriiFightWinner(node) : undefined, response.attempts);
+        } catch {
+          // The exact contract view is the bounded fallback.
+        }
+      }
       const response = await rpcCall(context, "FightFactory", "get_fight_winner", [...encodeU256(fightId), normalizeAddress(account)], options);
       const winner = decodeFightWinnerRpc(response.data);
       return result(context, startedAt, "starknet-rpc", winner.winner === normalizeAddress("0") ? undefined : winner, response.attempts);
@@ -758,6 +822,20 @@ export interface MarketsRepository {
 export function createMarketsRepository(context: RepositoryContext): MarketsRepository {
   const get = async (marketId: bigint, options: RequestOptions = {}) => {
     const startedAt = context.now();
+    if (context.torii) {
+      try {
+        const response = await context.torii.model<Record<string, unknown>>({
+          model: "Market",
+          selection: MARKET_SELECTION,
+          first: 1,
+          where: { market_idEQ: normalizeU256(marketId, "marketId") },
+        }, options);
+        const node = response.data.edges[0]?.node;
+        if (node) return result(context, startedAt, "torii", mapToriiMarket(node), response.attempts);
+      } catch {
+        // The exact contract view is the bounded fallback when Torii is unavailable.
+      }
+    }
     const response = await rpcCall(context, "Markets", "get_market", encodeU256(marketId), options);
     return result(context, startedAt, "starknet-rpc", decodeMarketRpc(response.data), response.attempts);
   };
@@ -791,6 +869,9 @@ export function createMarketsRepository(context: RepositoryContext): MarketsRepo
     async catalog(input = {}, options = {}) {
       const startedAt = context.now();
       const rpcCatalog = async (toriiError?: unknown) => {
+        const supported = context.capabilities.has("fightFeed")
+          || await context.capabilities.probe("fightFeed", options.signal);
+        if (!supported) throw new UnsupportedCapabilityError("bounded market catalog RPC fallback");
         const cursor = input.cursor?.startsWith("rpc:") ? BigInt(input.cursor.slice(4) || "0") : 0n;
         const feed = await createFightsRepository(context).feed({
           cursor,
@@ -835,20 +916,28 @@ export function createMarketsRepository(context: RepositoryContext): MarketsRepo
       try {
         if (!context.torii) throw new UnsupportedCapabilityError("market catalog without Torii");
         const toriiCursor = input.cursor?.startsWith("torii:") ? input.cursor.slice(6) : input.cursor;
-        const [marketPage, fights, numerators, denominators] = await Promise.all([
-          context.torii.model<Record<string, unknown>>({
-            model: "Market",
-            selection: MARKET_SELECTION,
-            first: clampPageSize(input.limit, context.budget.pageSize, 20),
-            ...(toriiCursor ? { after: toriiCursor } : {}),
-          }, options),
-          readAllToriiModels(context, { model: "Fight", selection: FIGHT_SELECTION }, mapToriiFight, options),
-          readAllToriiModels(context, { model: "VaultNumerator", selection: VAULT_NUMERATOR_SELECTION }, (node) => ({
+        const marketPage = await context.torii.model<Record<string, unknown>>({
+          model: "Market",
+          selection: MARKET_SELECTION,
+          first: clampPageSize(input.limit, context.budget.pageSize, 20),
+          ...(toriiCursor ? { after: toriiCursor } : {}),
+        }, options);
+        if (marketPage.data.edges.length === 0) {
+          return result(context, startedAt, "torii", {
+            items: [],
+            ...(marketPage.data.pageInfo.endCursor ? { cursor: `torii:${marketPage.data.pageInfo.endCursor}` } : {}),
+            hasMore: marketPage.data.pageInfo.hasNextPage,
+          }, marketPage.attempts);
+        }
+        const pageMarketIds = marketPage.data.edges.map((edge) => normalizeU256(scalarBigInt(edge.node.market_id, "market_id"), "marketId"));
+        const [fights, numerators, denominators] = await Promise.all([
+          readAllToriiModels(context, { model: "Fight", selection: FIGHT_SELECTION, where: { market_idIN: pageMarketIds } }, mapToriiFight, options),
+          readAllToriiModels(context, { model: "VaultNumerator", selection: VAULT_NUMERATOR_SELECTION, where: { market_idIN: pageMarketIds } }, (node) => ({
             marketId: scalarBigInt(node.market_id, "market_id"),
             index: scalarNumber(node.index, "index"),
             value: scalarBigInt(node.value, "value"),
           }), options),
-          readAllToriiModels(context, { model: "VaultDenominator", selection: VAULT_DENOMINATOR_SELECTION }, (node) => ({
+          readAllToriiModels(context, { model: "VaultDenominator", selection: VAULT_DENOMINATOR_SELECTION, where: { market_idIN: pageMarketIds } }, (node) => ({
             marketId: scalarBigInt(node.market_id, "market_id"),
             value: scalarBigInt(node.value, "value"),
           }), options),
@@ -904,6 +993,35 @@ export function createMarketsRepository(context: RepositoryContext): MarketsRepo
       if (!Number.isSafeInteger(outcomeSlotCount) || outcomeSlotCount < 2 || outcomeSlotCount > 255) {
         throw new ValidationError("outcomeSlotCount must be between 2 and 255.");
       }
+      if (context.torii) {
+        try {
+          const marketResult = await get(marketId, options);
+          const condition = conditionId ?? marketResult.data.conditionId;
+          const [vaults, denominator, payouts, payoutDenominator] = await Promise.all([
+            readAllToriiModels(context, { model: "VaultNumerator", selection: VAULT_NUMERATOR_SELECTION, where: { market_idEQ: normalizeU256(marketId, "marketId") } }, (node) => ({ index: scalarNumber(node.index, "index"), value: scalarBigInt(node.value, "value") }), options),
+            context.torii.model<Record<string, unknown>>({ model: "VaultDenominator", selection: VAULT_DENOMINATOR_SELECTION, first: 1, where: { market_idEQ: normalizeU256(marketId, "marketId") } }, options),
+            readAllToriiModels(context, { model: "PayoutNumerator", selection: PAYOUT_NUMERATOR_SELECTION, where: { condition_idEQ: normalizeU256(condition, "conditionId") } }, (node) => ({ index: scalarNumber(node.index, "index"), value: scalarBigInt(node.value, "value") }), options),
+            context.torii.model<Record<string, unknown>>({ model: "PayoutDenominator", selection: PAYOUT_DENOMINATOR_SELECTION, first: 1, where: { condition_idEQ: normalizeU256(condition, "conditionId") } }, options),
+          ]);
+          const vaultRows = Array.from({ length: outcomeSlotCount }, (_, index) => vaults.items.find((row) => row.index === index)?.value ?? 0n);
+          const payoutRows = Array.from({ length: outcomeSlotCount }, (_, index) => payouts.items.find((row) => row.index === index)?.value ?? 0n);
+          return result(context, startedAt, "torii", {
+            market: marketResult.data,
+            vaultNumerators: vaultRows,
+            vaultDenominator: denominator.data.edges[0] ? scalarBigInt(denominator.data.edges[0].node.value, "value") : 0n,
+            payoutNumerators: payoutRows,
+            payoutDenominator: payoutDenominator.data.edges[0] ? scalarBigInt(payoutDenominator.data.edges[0].node.value, "value") : 0n,
+          }, [
+            ...marketResult.meta.attempts,
+            ...vaults.attempts,
+            ...denominator.attempts,
+            ...payouts.attempts,
+            ...payoutDenominator.attempts,
+          ], marketResult.meta.complete && vaults.complete && payouts.complete, [...vaults.warnings, ...payouts.warnings]);
+        } catch {
+          // RPC below is used only when the indexed market state cannot be read.
+        }
+      }
       const marketResult = await get(marketId, options);
       const vaults = await mapConcurrent(Array.from({ length: outcomeSlotCount }, (_, index) => index), context.budget.maxConcurrency, async (index) => {
         const response = await rpcCall(context, "Markets", "get_vault_numerator", [...encodeU256(marketId), index.toString()], options);
@@ -932,6 +1050,24 @@ export function createMarketsRepository(context: RepositoryContext): MarketsRepo
     },
     async position(positionId, options = {}) {
       const startedAt = context.now();
+      if (context.torii) {
+        try {
+          const response = await context.torii.model<Record<string, unknown>>({
+            model: "MarketPosition",
+            selection: MARKET_POSITION_SELECTION,
+            first: 1,
+            where: { position_idEQ: normalizeU256(positionId, "positionId") },
+          }, options);
+          const node = response.data.edges[0]?.node;
+          if (node) return result(context, startedAt, "torii", {
+            marketId: scalarBigInt(node.market_id, "market_id"),
+            positionId: scalarBigInt(node.position_id, "position_id"),
+            outcomeIndex: scalarNumber(node.index, "index"),
+          }, response.attempts);
+        } catch {
+          // The exact contract view is the bounded fallback.
+        }
+      }
       const response = await rpcCall(context, "Markets", "get_market_position", encodeU256(positionId), options);
       const values = response.data;
       if (values.length < 4) throw new ValidationError("Market position response is incomplete.");
@@ -943,6 +1079,18 @@ export function createMarketsRepository(context: RepositoryContext): MarketsRepo
     },
     async conditionalBalance(account, positionId, options = {}) {
       const startedAt = context.now();
+      if (context.torii) {
+        try {
+          const balances = await createTokensRepository(context).accountBalances(account, options);
+          const match = balances.data.find((value) => value.tokenId === positionId
+            && sameAddress(value.contractAddress, context.network.contracts.ConditionalTokens));
+          if (balances.meta.complete || match) {
+            return result(context, startedAt, "torii", match?.balance ?? 0n, balances.meta.attempts, balances.meta.complete, balances.meta.warnings);
+          }
+        } catch {
+          // Direct balance_of is the bounded fallback.
+        }
+      }
       const response = await rpcCall(context, "ConditionalTokens", "balance_of", [normalizeAddress(account), ...encodeU256(positionId)], options);
       return result(context, startedAt, "starknet-rpc", decodeSingleU256(response.data, "conditionalBalance"), response.attempts);
     },
@@ -950,6 +1098,8 @@ export function createMarketsRepository(context: RepositoryContext): MarketsRepo
 }
 
 export interface TokensRepository {
+  accountBalances(account: Address, options?: RequestOptions): Promise<DataResult<IndexedTokenBalance[]>>;
+  strikeTicketBalances(account: Address, options?: RequestOptions): Promise<DataResult<IndexedTokenBalance[]>>;
   callsBalance(account: Address, options?: RequestOptions): Promise<DataResult<bigint>>;
   callsAllowance(owner: Address, spender?: Address, options?: RequestOptions): Promise<DataResult<bigint>>;
   strikeTicketBalance(account: Address, fightId: bigint, options?: RequestOptions): Promise<DataResult<bigint>>;
@@ -958,6 +1108,85 @@ export interface TokensRepository {
 }
 
 export function createTokensRepository(context: RepositoryContext): TokensRepository {
+  const accountBalances = async (account: Address, options: RequestOptions = {}) => {
+    const startedAt = context.now();
+    if (!context.torii) throw new UnsupportedCapabilityError("indexed token balances without Torii");
+    const budget = resolveRequestBudget(context.budget, options);
+    const balances: IndexedTokenBalance[] = [];
+    const attempts: SourceAttempt[] = [];
+    const warnings: DataWarning[] = [];
+    let offset = 0;
+    let complete = false;
+    for (let page = 0; page < budget.maxToriiPages && balances.length < budget.maxToriiItems; page += 1) {
+      const response = await context.torii.tokenBalances(account, {
+        offset,
+        limit: Math.min(context.budget.pageSize, budget.maxToriiItems - balances.length),
+      }, options);
+      attempts.push(...response.attempts);
+      for (const edge of response.data.edges) {
+        const token = edge.node.tokenMetadata;
+        const rawBalance = edge.node.balance ?? token?.amount ?? (token?.__typename === "ERC721__Token" ? "1" : undefined);
+        if (!token?.contractAddress || rawBalance === undefined) continue;
+        let balance: bigint;
+        let tokenId: bigint | undefined;
+        try {
+          balance = BigInt(rawBalance);
+          if (token.tokenId !== undefined) tokenId = BigInt(token.tokenId);
+        } catch {
+          warnings.push({ code: "TORII_TOKEN_BALANCE_INVALID", message: "Torii returned a malformed token balance.", source: "torii" });
+          continue;
+        }
+        const tokenType = token.__typename === "ERC20__Token"
+          ? "erc20" as const
+          : token.__typename === "ERC721__Token"
+            ? "erc721" as const
+            : token.__typename === "ERC1155__Token"
+              ? "erc1155" as const
+              : undefined;
+        balances.push({
+          contractAddress: normalizeAddress(token.contractAddress),
+          ...(tokenId === undefined ? {} : { tokenId }),
+          balance,
+          ...(tokenType ? { tokenType } : {}),
+        });
+      }
+      offset += response.data.edges.length;
+      if (response.data.edges.length === 0 || offset >= response.data.totalCount) {
+        complete = true;
+        break;
+      }
+    }
+    if (!complete) warnings.push({
+      code: balances.length >= budget.maxToriiItems ? "TORII_ITEM_LIMIT" : "TORII_PAGE_LIMIT",
+      message: "Token balance enumeration reached the configured Torii traversal budget.",
+      source: "torii",
+    });
+    return result(context, startedAt, "torii", balances, attempts, complete, warnings);
+  };
+
+  const indexedBalance = async (
+    contract: "CALLS" | "StrikeTickets" | "VaultPositions",
+    account: Address,
+    tokenId: bigint | undefined,
+    operation: string,
+    options: RequestOptions,
+  ): Promise<DataResult<bigint>> => {
+    const startedAt = context.now();
+    if (context.torii) {
+      try {
+        const balances = await accountBalances(account, options);
+        const match = balances.data.find((value) => sameAddress(value.contractAddress, context.network.contracts[contract])
+          && (tokenId === undefined ? value.tokenId === undefined : value.tokenId === tokenId));
+        if (balances.meta.complete || match) {
+          return result(context, startedAt, "torii", match?.balance ?? 0n, balances.meta.attempts, balances.meta.complete, balances.meta.warnings);
+        }
+      } catch {
+        // RPC is the bounded fallback for an unavailable Torii balance index.
+      }
+    }
+    return balance(contract, account, tokenId, operation, options);
+  };
+
   const balance = async (contract: "CALLS" | "StrikeTickets" | "VaultPositions", account: Address, tokenId: bigint | undefined, operation: string, options: RequestOptions) => {
     const startedAt = context.now();
     const calldata = tokenId === undefined ? [normalizeAddress(account)] : [normalizeAddress(account), ...encodeU256(tokenId)];
@@ -965,14 +1194,22 @@ export function createTokensRepository(context: RepositoryContext): TokensReposi
     return result(context, startedAt, "starknet-rpc", decodeSingleU256(response.data, operation), response.attempts);
   };
   return {
-    callsBalance(account, options = {}) { return balance("CALLS", account, undefined, "callsBalance", options); },
+    accountBalances,
+    async strikeTicketBalances(account, options = {}) {
+      const startedAt = context.now();
+      const balances = await accountBalances(account, options);
+      return result(context, startedAt, "torii", balances.data.filter((value) =>
+        value.tokenId !== undefined && sameAddress(value.contractAddress, context.network.contracts.StrikeTickets)),
+      balances.meta.attempts, balances.meta.complete, balances.meta.warnings);
+    },
+    callsBalance(account, options = {}) { return indexedBalance("CALLS", account, undefined, "callsBalance", options); },
     async callsAllowance(owner, spender = context.network.contracts.Markets, options = {}) {
       const startedAt = context.now();
       const response = await rpcCall(context, "CALLS", "allowance", [normalizeAddress(owner), normalizeAddress(spender)], options);
       return result(context, startedAt, "starknet-rpc", decodeSingleU256(response.data, "callsAllowance"), response.attempts);
     },
-    strikeTicketBalance(account, fightId, options = {}) { return balance("StrikeTickets", account, fightId, "strikeTicketBalance", options); },
-    vaultPositionBalance(account, positionId, options = {}) { return balance("VaultPositions", account, positionId, "vaultPositionBalance", options); },
+    strikeTicketBalance(account, fightId, options = {}) { return indexedBalance("StrikeTickets", account, fightId, "strikeTicketBalance", options); },
+    vaultPositionBalance(account, positionId, options = {}) { return indexedBalance("VaultPositions", account, positionId, "vaultPositionBalance", options); },
     async isApprovedForAll(token, owner, operator, options = {}) {
       const startedAt = context.now();
       const response = await rpcCall(context, token, "is_approved_for_all", [normalizeAddress(owner), normalizeAddress(operator)], options);
@@ -1012,34 +1249,18 @@ export function createGachaRepository(context: RepositoryContext, tokens: Tokens
           response.blockNumber,
         );
       }
-      const [open, size, rarities] = await Promise.all([
+      const [open, size] = await Promise.all([
         rpcCall(context, "Gacha", "pool_open", id, options),
         rpcCall(context, "Gacha", "pool_size", id, options),
-        mapConcurrent(Array.from({ length: 7 }, (_, rarity) => rarity), context.budget.maxConcurrency, async (rarity) => {
-          const [expected, registered, available] = await Promise.all([
-            rpcCall(context, "Gacha", "expected_count", [...id, rarity.toString()], options),
-            rpcCall(context, "Gacha", "pool_registered_count", [...id, rarity.toString()], options),
-            rpcCall(context, "Gacha", "pool_available_count", [...id, rarity.toString()], options),
-          ]);
-          return {
-            data: {
-              rarity,
-              expected: decodeSingleU256(expected.data, "expectedCount"),
-              registered: decodeSingleU256(registered.data, "registeredCount"),
-              available: decodeSingleU256(available.data, "availableCount"),
-            },
-            attempts: [...expected.attempts, ...registered.attempts, ...available.attempts],
-          };
-        }),
       ]);
       return result(context, startedAt, "starknet-rpc", {
         fightId,
         open: decodeSingleBool(open.data, "poolOpen"),
         size: decodeSingleU256(size.data, "poolSize"),
-        rarities: rarities.map((value) => value.data),
-      }, [...open.attempts, ...size.attempts, ...rarities.flatMap((value) => value.attempts)], false, [{
+        rarities: [],
+      }, [...open.attempts, ...size.attempts], false, [{
         code: "CAPABILITY_FALLBACK",
-        message: "Gacha pool state used bounded singleton views because the aggregate view is unavailable.",
+        message: "This deployment lacks the aggregate Gacha pool view; open and size were retained without per-rarity RPC fan-out.",
         source: "starknet-rpc",
       }]);
     },
@@ -1078,13 +1299,9 @@ export function createGachaRepository(context: RepositoryContext, tokens: Tokens
           source: "starknet-rpc",
         }]);
       }
-      const fallback = await mapConcurrent(unique, budget.maxConcurrency, (fightId) =>
-        createGachaRepository(context, tokens).pool(fightId, options));
-      return result(context, startedAt, "starknet-rpc", fallback.map((value) => value.data), fallback.flatMap((value) => value.meta.attempts), false, [{
-        code: "CAPABILITY_FALLBACK",
-        message: "Gacha pool batches used bounded singleton views because get_pool_states is unavailable.",
-        source: "starknet-rpc",
-      }]);
+      if (unique.length !== 1) throw new UnsupportedCapabilityError("Gacha pool batches without get_pool_states");
+      const fallback = await createGachaRepository(context, tokens).pool(unique[0]!, options);
+      return result(context, startedAt, "starknet-rpc", [fallback.data], fallback.meta.attempts, false, fallback.meta.warnings);
     },
     async user(fightId, account, options = {}) {
       const startedAt = context.now();
@@ -1151,7 +1368,8 @@ export function createGachaRepository(context: RepositoryContext, tokens: Tokens
           source: "starknet-rpc",
         }]);
       }
-      const states = await mapConcurrent(ids, budget.maxConcurrency, async (fightId) => {
+      if (ids.length !== 1) throw new UnsupportedCapabilityError("Gacha account-state batches without get_user_states");
+      const states = await mapConcurrent(ids, 1, async (fightId) => {
         const [userState, poolState] = await Promise.all([
           createGachaRepository(context, tokens).user(fightId, account, options),
           createGachaRepository(context, tokens).pool(fightId, options),

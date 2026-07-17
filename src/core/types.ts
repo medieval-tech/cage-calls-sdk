@@ -272,6 +272,13 @@ export interface MarketPosition {
   value?: bigint;
 }
 
+export interface IndexedTokenBalance {
+  contractAddress: Address;
+  tokenId?: bigint;
+  balance: bigint;
+  tokenType?: "erc20" | "erc721" | "erc1155";
+}
+
 export interface RelicMetadataAttribute {
   traitType?: string;
   value?: string | number | boolean | null;
@@ -402,7 +409,14 @@ export interface GachaActionEligibilityInput {
   pool?: GachaPoolState;
   user?: GachaUserState;
   connected?: boolean;
+  /** @deprecated Prefer the granular verification flags. */
   stateComplete?: boolean;
+  /** Whether pool open/size state was verified. Defaults to stateComplete. */
+  poolStateComplete?: boolean;
+  /** Whether per-rarity readiness counters were verified. Defaults to stateComplete. */
+  poolReadinessComplete?: boolean;
+  /** Whether account ticket/escrow state was verified. Defaults to stateComplete. */
+  userStateComplete?: boolean;
   gachaAdmin?: boolean;
 }
 

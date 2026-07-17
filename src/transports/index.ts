@@ -63,6 +63,22 @@ export interface ToriiTokenNode {
   metadataDescription?: string | null;
   metadataAttributes?: string | null;
   imagePath?: string | null;
+  /** Account-scoped ERC-20/ERC-1155 balance returned by Torii tokenBalances. */
+  amount?: string;
+}
+
+function shouldUseRpcFallback(error: unknown): boolean {
+  if (!(error instanceof TransportError)) return true;
+  if (error.rpcCode === 429) return true;
+  if (error.rpcCode !== undefined && error.rpcCode !== 429) return false;
+  if (error.status !== undefined) {
+    return error.status === 408 || error.status === 429 || error.status >= 500;
+  }
+  const code = transportDiagnosticCode(error).toUpperCase();
+  return code.includes("TIMEOUT")
+    || code.includes("NETWORK")
+    || code.includes("FETCH")
+    || code === "TRANSPORT_ERROR";
 }
 
 export interface ToriiTokenBalanceConnection {
@@ -513,6 +529,7 @@ export function createFallbackRpcTransport(options: {
     } catch (primaryError) {
       if (primary === fallback) throw primaryError;
       if (requestOptions?.signal?.aborted || transportDiagnosticCode(primaryError) === "ABORTED") throw primaryError;
+      if (!shouldUseRpcFallback(primaryError)) throw primaryError;
       const code = transportDiagnosticCode(primaryError).toUpperCase();
       if (primaryError instanceof TransportError && (
         primaryError.status === 408 || primaryError.status === 429 || primaryError.rpcCode === 429
@@ -739,7 +756,7 @@ export function createToriiGraphqlTransport(options: { url: string } & HttpOptio
       }
     },
     async tokenBalances(account, request = {}, requestOptions) {
-      const document = "query CageCallsBalances($account:String!,$offset:Int,$limit:Int){tokenBalances(accountAddress:$account,offset:$offset,limit:$limit){totalCount edges{node{tokenMetadata{__typename ... on ERC721__Token{tokenId contractAddress metadata metadataName metadataDescription metadataAttributes imagePath} ... on ERC1155__Token{tokenId contractAddress metadata metadataName metadataDescription metadataAttributes imagePath}}}}}}";
+      const document = "query CageCallsBalances($account:String!,$offset:Int,$limit:Int){tokenBalances(accountAddress:$account,offset:$offset,limit:$limit){totalCount edges{node{tokenMetadata{__typename ... on ERC20__Token{name symbol decimals contractAddress amount} ... on ERC721__Token{tokenId contractAddress metadata metadataName metadataDescription metadataAttributes imagePath} ... on ERC1155__Token{tokenId contractAddress amount metadata metadataName metadataDescription metadataAttributes imagePath}}}}}}";
       const result = await query<{ tokenBalances: ToriiTokenBalanceConnection }>(document, {
         account: toriiAddress(account),
         offset: request.offset ?? 0,

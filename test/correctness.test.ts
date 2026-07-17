@@ -99,6 +99,26 @@ describe("gacha action eligibility", () => {
     expect(deriveGachaActionEligibility({ pool: { ...readyPool, open: true }, user: { ...user, ticketBalance: 0n }, connected: true }).strike.reason).toMatch(/no StrikeTickets/i);
     expect(deriveGachaActionEligibility({ pool: { ...readyPool, open: true }, user: { ...user, ticketBalance: 0n, escrowedTokenId: 9n }, connected: true }).keep.allowed).toBe(true);
   });
+
+  it("keeps action verification granular when rarity counters are unavailable", () => {
+    const pool = { ...readyPool, open: true, rarities: [] };
+    const input = {
+      pool,
+      user,
+      connected: true,
+      gachaAdmin: true,
+      stateComplete: false,
+      poolStateComplete: true,
+      poolReadinessComplete: false,
+      userStateComplete: true,
+    };
+    const eligibility = deriveGachaActionEligibility(input);
+    expect(eligibility.strike.allowed).toBe(true);
+    expect(eligibility.keep.reason).toMatch(/no relic/i);
+    expect(eligibility.openPool.allowed).toBe(false);
+    expect(eligibility.openPool.reason).toMatch(/readiness/i);
+    expect(eligibility.closePool.allowed).toBe(true);
+  });
 });
 
 describe("admin capabilities and query scope", () => {

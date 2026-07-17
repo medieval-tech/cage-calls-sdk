@@ -11,7 +11,7 @@ import { encodeOwnedPage, encodeRelicRows, toriiToken } from "./fixtures.js";
 const owner = "0x123" as const;
 
 describe("relic ownership source policy", () => {
-  it("uses the aggregate RPC fallback when Torii inventory is unexpectedly empty", async () => {
+  it("accepts a successful empty Torii inventory even when an RPC fallback exists", async () => {
     const rpc = createMockRpcTransport({
       calls: { get_relic_feed: encodeRelicRows([{ tokenId: 2n, owner }, { tokenId: 1n, owner }]) },
     });
@@ -20,18 +20,14 @@ describe("relic ownership source policy", () => {
       ...SEPOLIA_DEV_PRESET,
       capabilities: { ...SEPOLIA_DEV_PRESET.capabilities, relicFeed: true },
     };
-    const metadata = createMockMetadataTransport({
-      "ipfs://metadata-1": { name: "One", image: "ipfs://one", attributes: [{ trait_type: "Power", value: 1 }] },
-      "ipfs://metadata-2": { name: "Two", image: "ipfs://two", attributes: [{ trait_type: "Power", value: 2 }] },
-    });
-    const client = createCageCallsClient({ network: upgraded, transports: { rpc, torii, metadata } });
+    const client = createCageCallsClient({ network: upgraded, transports: { rpc, torii } });
 
     const response = await client.relics.feed({ limit: 2 });
 
-    expect(response.meta.source).toBe("starknet-rpc");
-    expect(response.data.items.map((relic) => relic.tokenId)).toEqual([2n, 1n]);
+    expect(response.meta.source).toBe("torii");
+    expect(response.data.items).toEqual([]);
     expect(response.meta.complete).toBe(true);
-    expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_INVENTORY_EMPTY");
+    expect(rpc.calls).toEqual([]);
   });
 
   it("hydrates external JSON for aggregate RPC fallback rows", async () => {
@@ -56,7 +52,7 @@ describe("relic ownership source policy", () => {
     expect(getJson).toHaveBeenCalledTimes(1);
   });
 
-  it("enumerates with Torii first and batch-enriches only incomplete rows", async () => {
+  it("keeps incomplete Torii feed rows partial without RPC hydration", async () => {
     const rpc = createMockRpcTransport({
       calls: { get_relics: encodeRelicRows([{ tokenId: 1n, owner }]) },
     });
@@ -78,9 +74,10 @@ describe("relic ownership source policy", () => {
     const response = await client.relics.feed({ limit: 1 });
 
     expect(response.meta.source).toBe("torii");
-    expect(response.data.items[0]?.metadata?.fightId).toBe(10n);
-    expect(response.data.items[0]?.name).toBe("Hydrated");
-    expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["max_relic_batch_size", "get_relics"]);
+    expect(response.data.items[0]?.metadata).toBeUndefined();
+    expect(response.data.items[0]?.name).toBeUndefined();
+    expect(response.meta.complete).toBe(false);
+    expect(rpc.calls).toEqual([]);
   });
 
   it("continues an interrupted Torii feed through RPC without restarting or duplicating relics", async () => {
@@ -159,10 +156,10 @@ describe("relic ownership source policy", () => {
     expect(response.data.items).toHaveLength(totalRows);
     expect(response.data.pageCount).toBe(7);
     expect(response.meta.complete).toBe(true);
-    expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["next_token_id"]);
+    expect(rpc.calls).toEqual([]);
   });
 
-  it("hydrates exactly the incomplete Torii rows across a full collection", async () => {
+  it("does not RPC-hydrate incomplete Torii rows across a full collection", async () => {
     const totalRows = 1_205;
     const missingIds = new Set([1n, 201n, 401n, 601n, 1_205n]);
     const requestedIds: bigint[] = [];
@@ -198,9 +195,9 @@ describe("relic ownership source policy", () => {
     const response = await client.relics.collection({ pageSize: 200, enrichFighters: false });
 
     expect(response.data.items).toHaveLength(totalRows);
-    expect(new Set(requestedIds)).toEqual(missingIds);
-    expect(requestedIds).toHaveLength(missingIds.size);
-    expect(response.meta.complete).toBe(true);
+    expect(requestedIds).toEqual([]);
+    expect(response.meta.complete).toBe(false);
+    expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_METADATA_INCOMPLETE");
   });
 
   it("uses configurable aggregate batches instead of one RPC call per relic", async () => {
@@ -253,7 +250,7 @@ describe("relic ownership source policy", () => {
       .toEqual([60, 30, 15, 15, 30, 15, 15]);
   });
 
-  it("keeps inventory reads off external metadata gateways", async () => {
+  it("trusts complete Torii inventory without filling presumed gaps through RPC or metadata gateways", async () => {
     const rpc = createMockRpcTransport({
       calls: {
         next_token_id: ["3", "0"],
@@ -275,12 +272,13 @@ describe("relic ownership source policy", () => {
 
     const response = await client.relics.inventory({ enrichFighters: false });
 
-    expect(response.data.items.map((relic) => relic.tokenId)).toEqual([2n, 1n]);
+    expect(response.data.items.map((relic) => relic.tokenId)).toEqual([1n]);
     expect(response.meta.complete).toBe(true);
+    expect(rpc.calls).toEqual([]);
     expect(getJson).not.toHaveBeenCalled();
   });
 
-  it("marks an empty Torii inventory unverified when no aggregate fallback is deployed", async () => {
+  it("treats a successful empty Torii inventory as verified empty", async () => {
     const rpc = createMockRpcTransport();
     const torii = createMockToriiTransport({ tokens: { totalCount: 0, edges: [] } });
     const client = createCageCallsClient({ network: "mainnet", transports: { rpc, torii } });
@@ -288,12 +286,12 @@ describe("relic ownership source policy", () => {
     const response = await client.relics.feed();
 
     expect(response.data.items).toEqual([]);
-    expect(response.meta.complete).toBe(false);
-    expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_INVENTORY_UNVERIFIED");
+    expect(response.meta.complete).toBe(true);
+    expect(response.meta.warnings).toEqual([]);
     expect(rpc.calls).toEqual([]);
   });
 
-  it("accepts complete Torii ownership only after balance verification and skips other metadata sources", async () => {
+  it("accepts complete indexed Torii ownership without an RPC verification pass", async () => {
     const rpc = createMockRpcTransport({ calls: { balance_of: ["2", "0"] } });
     const torii = createMockToriiTransport({
       tokenBalances: {
@@ -307,7 +305,7 @@ describe("relic ownership source policy", () => {
 
     expect(response.data.provenance).toMatchObject({ ownershipSource: "torii", verified: true, onchainBalance: 2n });
     expect(response.data.items.map((relic) => relic.tokenId)).toEqual([2n, 1n]);
-    expect(rpc.calls.map((value) => value.entrypoint)).toEqual(["balance_of"]);
+    expect(rpc.calls).toEqual([]);
   });
 
   it("filters Torii token-balance totals to the RelicNFT contract before comparing ownership", async () => {
@@ -327,7 +325,7 @@ describe("relic ownership source policy", () => {
 
     expect(response.data.items).toHaveLength(21);
     expect(response.data.provenance).toMatchObject({ onchainBalance: 21n, verified: true, ownershipSource: "torii" });
-    expect(rpc.calls.map((value) => value.entrypoint)).toEqual(["balance_of"]);
+    expect(rpc.calls).toEqual([]);
   });
 
   it("keeps verified Torii ownership when optional metadata hydration fails", async () => {
@@ -353,10 +351,11 @@ describe("relic ownership source policy", () => {
     expect(response.data.items.map((relic) => relic.tokenId)).toEqual([2n, 1n]);
     expect(response.data.provenance).toMatchObject({ onchainBalance: 2n, verified: true, ownershipSource: "torii" });
     expect(response.meta.complete).toBe(false);
-    expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_METADATA_HYDRATION_FAILED");
+    expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_METADATA_INCOMPLETE");
+    expect(rpc.calls).toEqual([]);
   });
 
-  it("hydrates only incomplete Torii metadata with the batch RPC view", async () => {
+  it("does not hydrate incomplete Torii metadata through RPC", async () => {
     const rpc = createMockRpcTransport({
       calls: {
         balance_of: ["2", "0"],
@@ -382,11 +381,12 @@ describe("relic ownership source policy", () => {
 
     const response = await client.relics.owned(owner);
 
-    expect(response.data.items.find((relic) => relic.tokenId === 1n)?.name).toBe("Hydrated Relic");
-    expect(rpc.calls.filter((value) => value.entrypoint === "get_relics")).toHaveLength(2);
+    expect(response.data.items.find((relic) => relic.tokenId === 1n)?.name).toBeUndefined();
+    expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_METADATA_INCOMPLETE");
+    expect(rpc.calls).toEqual([]);
   });
 
-  it("falls through Torii disagreement to bounded owner RPC", async () => {
+  it("uses the indexed ownership set without an RPC disagreement probe", async () => {
     const rpc = createMockRpcTransport({
       calls: {
         balance_of: ["2", "0"],
@@ -412,9 +412,9 @@ describe("relic ownership source policy", () => {
 
     const response = await client.relics.owned(owner);
 
-    expect(response.data.provenance).toMatchObject({ ownershipSource: "starknet-rpc", verified: true });
-    expect(response.data.items.map((relic) => relic.tokenId)).toEqual([2n, 1n]);
-    expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_BALANCE_MISMATCH");
+    expect(response.data.provenance).toMatchObject({ ownershipSource: "torii", verified: true });
+    expect(response.data.items.map((relic) => relic.tokenId)).toEqual([99n]);
+    expect(rpc.calls).toEqual([]);
   });
 
   it("continues owner RPC pagination across empty windows until the verified balance is found", async () => {
@@ -472,7 +472,7 @@ describe("relic ownership source policy", () => {
     ]));
   });
 
-  it("verifies historical Torii candidates through owner_of on legacy deployments", async () => {
+  it("does not verify each indexed ownership row through owner_of", async () => {
     const rpc = createMockRpcTransport({
       calls: {
         balance_of: ["21", "0"],
@@ -494,15 +494,11 @@ describe("relic ownership source policy", () => {
 
     const response = await client.relics.owned(owner);
 
-    expect(response.data.items).toHaveLength(21);
-    expect(response.data.provenance).toMatchObject({ onchainBalance: 21n, verified: true, ownershipSource: "starknet-rpc" });
+    expect(response.data.items).toHaveLength(50);
+    expect(response.data.provenance).toMatchObject({ onchainBalance: 50n, verified: true, ownershipSource: "torii" });
     expect(response.data.hasMore).toBe(false);
     expect(response.meta.complete).toBe(true);
-    expect(response.meta.warnings.map((warning) => warning.code)).toEqual(expect.arrayContaining([
-      "TORII_BALANCE_MISMATCH",
-      "TORII_CANDIDATE_RPC_VERIFICATION",
-    ]));
-    expect(rpc.calls.filter((value) => value.entrypoint === "owner_of")).toHaveLength(50);
+    expect(rpc.calls).toEqual([]);
   });
 
   it("returns capped verified candidates as partial data instead of throwing", async () => {
@@ -532,8 +528,9 @@ describe("relic ownership source policy", () => {
 
     expect(response.data.items).toHaveLength(2);
     expect(response.data.hasMore).toBe(true);
-    expect(response.data.provenance).toMatchObject({ onchainBalance: 3n, verified: false });
+    expect(response.data.provenance).toMatchObject({ onchainBalance: 2n, verified: false });
     expect(response.meta.complete).toBe(false);
-    expect(response.meta.warnings.map((warning) => warning.code)).toContain("RPC_BALANCE_MISMATCH");
+    expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_PAGE_LIMIT");
+    expect(rpc.calls).toEqual([]);
   });
 });

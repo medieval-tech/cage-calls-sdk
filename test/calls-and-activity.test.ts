@@ -139,7 +139,7 @@ describe("activity", () => {
     expect(response.data.items).toHaveLength(2);
   });
 
-  it("uses bounded singleton views when the aggregate fight feed is unavailable", async () => {
+  it("does not fan out singleton views when the aggregate fight feed is unavailable", async () => {
     const encodedFight = [
       ...encodeU256(1n), ...encodeU256(2n), ...encodeByteArray("Cage Night"), ...encodeU256(9n),
       ...encodeU256(11n), ...encodeByteArray("Fighter A"), ...encodeByteArray("Lightweight"),
@@ -174,13 +174,9 @@ describe("activity", () => {
       now: () => 15_000,
     } satisfies RepositoryContext;
 
-    const response = await createFightsRepository(context).feed({ limit: 1 });
-
-    expect(response.data.items).toHaveLength(1);
-    expect(response.data.items[0]?.fightId).toBe(1n);
-    expect(response.meta.complete).toBe(false);
-    expect(response.meta.warnings).toContainEqual(expect.objectContaining({ code: "AGGREGATE_VIEW_FALLBACK" }));
-    expect(rpc.calls.some((call) => call.entrypoint === "get_fight_feed")).toBe(false);
+    await expect(createFightsRepository(context).feed({ limit: 1 }))
+      .rejects.toThrow("fight feed without Torii");
+    expect(rpc.calls).toEqual([]);
   });
 
   it("paginates Torii fight buys with stable numeric cursors", async () => {

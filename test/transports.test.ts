@@ -75,6 +75,28 @@ describe("RPC transports", () => {
     expect(JSON.stringify(logger.debug.mock.calls)).not.toContain("0x2");
   });
 
+  it("does not duplicate deterministic contract errors on the fallback RPC", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+      json({ jsonrpc: "2.0", id: 1, error: { code: 21, message: "Contract error" } }));
+    const logger = { warn: vi.fn() };
+    const rpc = createFallbackRpcTransport({
+      primaryUrl: "https://primary.example",
+      fallbackUrl: "https://fallback.example",
+      fetch,
+      logger,
+      maxRetries: 0,
+    });
+
+    await expect(rpc.call({ contractAddress: "0x1", entrypoint: "missing_view" }))
+      .rejects.toMatchObject({ rpcCode: 21 });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      "Cage Calls RPC fallback selected.",
+      expect.anything(),
+    );
+  });
+
   it("keeps an overloaded primary on cooldown across subsequent requests", async () => {
     let now = 1_000;
     const primaryCalls: string[] = [];

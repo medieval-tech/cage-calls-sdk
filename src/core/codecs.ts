@@ -149,6 +149,13 @@ export function encodeU256(value: string | number | bigint): string[] {
   return [(parsed & U128_MASK).toString(), (parsed >> 128n).toString()];
 }
 
+/** Normalize an unsigned 256-bit value for Torii model filters. */
+export function normalizeU256(value: string | number | bigint, label = "u256"): Hex {
+  const parsed = asBigInt(value, label);
+  if (parsed < 0n || parsed > U256_MAX) throw new ValidationError(`${label} is outside the u256 range.`);
+  return toHex(parsed);
+}
+
 export function decodeU256(low: string | bigint, high: string | bigint): bigint {
   const lowValue = asBigInt(low, "u256.low");
   const highValue = asBigInt(high, "u256.high");
