@@ -8,7 +8,7 @@ import {
   CageCallsProvider,
   useInfiniteAccountFightStates,
   useInfiniteMarketCatalog,
-} from "@medieval-tech/cage-calls-sdk/react";
+} from "@medievaltech/cage-calls-sdk/react";
 
 const queryClient = new QueryClient();
 

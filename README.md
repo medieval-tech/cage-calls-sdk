@@ -14,13 +14,13 @@ mobile integration testing.
 ## Install
 
 ```sh
-pnpm add @medieval-tech/cage-calls-sdk
+pnpm add @medievaltech/cage-calls-sdk
 ```
 
 For React Query bindings:
 
 ```sh
-pnpm add @medieval-tech/cage-calls-sdk @tanstack/react-query react
+pnpm add @medievaltech/cage-calls-sdk @tanstack/react-query react
 ```
 
 Node 18+, browsers, modern edge runtimes, and Capacitor are supported. Runtimes must provide
@@ -35,7 +35,7 @@ import {
   createFallbackRpcTransport,
   createIpfsMetadataTransport,
   createToriiGraphqlTransport,
-} from "@medieval-tech/cage-calls-sdk";
+} from "@medievaltech/cage-calls-sdk";
 
 const client = createCageCallsClient({
   network: "mainnet",
@@ -89,10 +89,10 @@ The client exposes `fighters`, `fights`, `fightEvents`, `events`, `accounts`, `m
 
 ## Entry points
 
-- `@medieval-tech/cage-calls-sdk`: framework-neutral client, repositories, types, transports, and
+- `@medievaltech/cage-calls-sdk`: framework-neutral client, repositories, types, transports, and
   pure statistics helpers.
-- `@medieval-tech/cage-calls-sdk/react`: provider, React Query hooks, and live invalidation.
-- `@medieval-tech/cage-calls-sdk/testing`: mock RPC, Torii, and metadata transports.
+- `@medievaltech/cage-calls-sdk/react`: provider, React Query hooks, and live invalidation.
+- `@medievaltech/cage-calls-sdk/testing`: mock RPC, Torii, and metadata transports.
 
 ## Guides
 

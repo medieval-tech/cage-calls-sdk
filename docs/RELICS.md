@@ -32,7 +32,7 @@ same metrics without another network request:
 import {
   filterRelicCollection,
   summarizeRelicCollection,
-} from "@medieval-tech/cage-calls-sdk";
+} from "@medievaltech/cage-calls-sdk";
 
 const collection = await client.relics.inventory();
 const filter = { fighterKeys: ["jordan_rank"], rarityTiers: ["common"] as const };
