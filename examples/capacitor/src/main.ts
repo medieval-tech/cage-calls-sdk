@@ -2,7 +2,7 @@ import {
   SEPOLIA_STAGING_PRESET,
   createCageCallsClient,
   createHttpRpcTransport,
-} from "@medieval-tech/cage-calls-sdk";
+} from "@medievaltech/cage-calls-sdk";
 
 // Capacitor owns native authentication and storage; the SDK only receives platform fetch.
 const client = createCageCallsClient({

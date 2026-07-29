@@ -1,5 +1,5 @@
-import { MAINNET_PRESET, createCageCallsClient } from "@medieval-tech/cage-calls-sdk";
-import { createMockRpcTransport } from "@medieval-tech/cage-calls-sdk/testing";
+import { MAINNET_PRESET, createCageCallsClient } from "@medievaltech/cage-calls-sdk";
+import { createMockRpcTransport } from "@medievaltech/cage-calls-sdk/testing";
 
 const client = createCageCallsClient({
   network: "mainnet",

@@ -14,7 +14,7 @@ import {
   createCageCallsClient,
   createFallbackRpcTransport,
   createToriiGraphqlTransport,
-} from "@medieval-tech/cage-calls-sdk";
+} from "@medievaltech/cage-calls-sdk";
 
 const reads = createCageCallsClient({
   network: "sepolia-dev",
@@ -39,7 +39,7 @@ and refresh triggers. Inspect `DataResult.meta.complete` and warnings before pre
 authoritative.
 
 React Native consumers can use the framework-neutral client with their preferred query library.
-Capacitor/React webviews may use `@medieval-tech/cage-calls-sdk/react` with React Query.
+Capacitor/React webviews may use `@medievaltech/cage-calls-sdk/react` with React Query.
 
 ## Product journey mapping
 
