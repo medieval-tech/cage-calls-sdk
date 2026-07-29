@@ -11,10 +11,6 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     environment: npm
-    env:
-      # Used only for the one-time bootstrap publish. Leave unset after the
-      # npm trusted publisher has been configured for this workflow.
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
