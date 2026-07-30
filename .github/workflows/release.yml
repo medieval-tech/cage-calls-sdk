@@ -2,6 +2,18 @@ name: release
 
 on:
   workflow_dispatch:
+    inputs:
+      dist_tag:
+        description: >-
+          npm dist-tag. `latest` for stable releases, `next` for prereleases.
+          Publishing a stable version under `next` leaves `latest` pointing at an
+          older build, which is what consumers get by default.
+        required: true
+        default: latest
+        type: choice
+        options:
+          - latest
+          - next
 
 permissions:
   contents: read
@@ -27,5 +39,5 @@ jobs:
       - run: pnpm check
       - name: Verify package contents
         run: npm pack --dry-run
-      - name: Publish canary
-        run: npm publish --access public --tag next --provenance
+      - name: Publish
+        run: npm publish --access public --tag "${{ inputs.dist_tag }}" --provenance
