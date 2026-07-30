@@ -45,7 +45,7 @@ export interface Page<T, Cursor = string> {
 
 export type CageCallsQueryKey = readonly ["cage-calls", ...readonly unknown[]];
 
-export type NetworkName = "mainnet" | "sepolia-dev" | "sepolia-staging";
+export type NetworkName = "mainnet" | "sepolia-dev" | "sepolia-staging" | "katana";
 
 export type ContractName =
   | "CALLS"

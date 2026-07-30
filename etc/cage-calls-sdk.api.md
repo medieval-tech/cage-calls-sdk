@@ -1458,6 +1458,58 @@ export interface IndexedTokenBalance {
 export function ipfsPath(uri: string): string | undefined;
 
 // @public (undocumented)
+export const KATANA_PRESET: {
+    name: string;
+    preset: "katana";
+    chainId: "0x534e5f5345504f4c4941";
+    namespace: string;
+    deploymentRevision: string;
+    worldAddress: "0x426c2e7fa41481653b60cc1c5c7ffef5667d01065b506bbaa6bf95b897b6645";
+    contracts: {
+        CALLS: "0x797f90b9fd6cb3dc57e44997794a232d740c3c2344901042dbfb2d1b3d5b49b";
+        CageCallsOracle: "0x5f5b55a617b49a7a2f5882dd73be9841e840dd18366d4430c5d93463029817";
+        ConditionalTokens: "0x75456df21ca735ded1c237dcfdc7835c0225caf6b9919a5c53f73d245d8b7ed";
+        FightFactory: "0x759ed72e74e2d3b271ec0315c1718bd8b16cd2b26acb106eb6c12825aed707a";
+        FighterRegistry: "0x7ea3649609007a966daa769a48623685361d1c69373ae83c7c22dca573b40a4";
+        Gacha: "0x6c738e98a6e5073fcf60dde1264205703f0c61b294cd601d08b587e7d2b135b";
+        Markets: "0x7869310909a1312e51b56aa2a9466c342b9592942490d9850ef6dcc9ebd554b";
+        RelicNFT: "0x3a524d7f70b8990e406d49b7bd0e7a08b6c04e48dcb4840e626d1c2b8dd2082";
+        StrikeTickets: "0x4dc35205777a3573c71b246985e4316ce95045440bf31132a934fd3c43f49d9";
+        VaultFees: "0x78828611e4f5bab1a11d3381ac6e173d6b8312b475933d3935acf020f0a14a1";
+        VaultPositions: "0x152d153d9a6c43f6e3202c48b9c8eed6fe00693f1c268d84c0fc0f897859f70";
+    };
+    classHashes: {
+        CALLS: "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300";
+        CageCallsOracle: "0x16ca3bd248cc4eb5cd9869c876871091831da293b2e760bf73739e426b39b23";
+        ConditionalTokens: "0x6435347fd999d80f72fde6e95ca6c8c832ef65bb46630a9fc76ed7fc98e974b";
+        FightFactory: "0x73bc30b7067715a59d40bfccebc2485bf0445c7a70e3222ab6a4faf0d06e603";
+        FighterRegistry: "0x366b6ae2c4709582b47b8d7d21c7ec66eeae252fd03fad3b9e4598be6c60694";
+        Gacha: "0x74b81062f5cfaa8c1694ef9bcf1e5084864216de92e88bf05261489bf25cdba";
+        Markets: "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12";
+        RelicNFT: "0x7fe51e65a2dd5524462717f2d95435130e8a9874492ea74d8add9f20b6b7696";
+        StrikeTickets: "0x6f5d99084de5e581da00408c0d44b9267a695184c346f69780d4ee2d8e9ebde";
+        VaultFees: "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e";
+        VaultPositions: "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730";
+    };
+    toriiUrl: string;
+    cartridgeRpcUrl: string;
+    vrfAddress: "0x361d86ecfa1b8c96b646135ef85225663b898fcddb5c7876a2b455dba3bd23d";
+    capabilities: {
+        fightFeed: true;
+        fightFeedByIds: true;
+        fightBuyPagination: true;
+        relicFeed: true;
+        relicBatch: true;
+        relicOwnerPage: true;
+        fighterBatch: true;
+        gachaPoolAggregate: true;
+        gachaAvailableTokenIds: true;
+        accountFightFeed: true;
+        gachaUserStates: true;
+    };
+};
+
+// @public (undocumented)
 export type LiveConnectionStatus = "connecting" | "connected" | "disconnected" | "reconnecting";
 
 // @public (undocumented)
@@ -1810,10 +1862,60 @@ export const NETWORK_PRESETS: Readonly<{
             gachaUserStates: true;
         };
     };
+    katana: {
+        name: string;
+        preset: "katana";
+        chainId: "0x534e5f5345504f4c4941";
+        namespace: string;
+        deploymentRevision: string;
+        worldAddress: "0x426c2e7fa41481653b60cc1c5c7ffef5667d01065b506bbaa6bf95b897b6645";
+        contracts: {
+            CALLS: "0x797f90b9fd6cb3dc57e44997794a232d740c3c2344901042dbfb2d1b3d5b49b";
+            CageCallsOracle: "0x5f5b55a617b49a7a2f5882dd73be9841e840dd18366d4430c5d93463029817";
+            ConditionalTokens: "0x75456df21ca735ded1c237dcfdc7835c0225caf6b9919a5c53f73d245d8b7ed";
+            FightFactory: "0x759ed72e74e2d3b271ec0315c1718bd8b16cd2b26acb106eb6c12825aed707a";
+            FighterRegistry: "0x7ea3649609007a966daa769a48623685361d1c69373ae83c7c22dca573b40a4";
+            Gacha: "0x6c738e98a6e5073fcf60dde1264205703f0c61b294cd601d08b587e7d2b135b";
+            Markets: "0x7869310909a1312e51b56aa2a9466c342b9592942490d9850ef6dcc9ebd554b";
+            RelicNFT: "0x3a524d7f70b8990e406d49b7bd0e7a08b6c04e48dcb4840e626d1c2b8dd2082";
+            StrikeTickets: "0x4dc35205777a3573c71b246985e4316ce95045440bf31132a934fd3c43f49d9";
+            VaultFees: "0x78828611e4f5bab1a11d3381ac6e173d6b8312b475933d3935acf020f0a14a1";
+            VaultPositions: "0x152d153d9a6c43f6e3202c48b9c8eed6fe00693f1c268d84c0fc0f897859f70";
+        };
+        classHashes: {
+            CALLS: "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300";
+            CageCallsOracle: "0x16ca3bd248cc4eb5cd9869c876871091831da293b2e760bf73739e426b39b23";
+            ConditionalTokens: "0x6435347fd999d80f72fde6e95ca6c8c832ef65bb46630a9fc76ed7fc98e974b";
+            FightFactory: "0x73bc30b7067715a59d40bfccebc2485bf0445c7a70e3222ab6a4faf0d06e603";
+            FighterRegistry: "0x366b6ae2c4709582b47b8d7d21c7ec66eeae252fd03fad3b9e4598be6c60694";
+            Gacha: "0x74b81062f5cfaa8c1694ef9bcf1e5084864216de92e88bf05261489bf25cdba";
+            Markets: "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12";
+            RelicNFT: "0x7fe51e65a2dd5524462717f2d95435130e8a9874492ea74d8add9f20b6b7696";
+            StrikeTickets: "0x6f5d99084de5e581da00408c0d44b9267a695184c346f69780d4ee2d8e9ebde";
+            VaultFees: "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e";
+            VaultPositions: "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730";
+        };
+        toriiUrl: string;
+        cartridgeRpcUrl: string;
+        vrfAddress: "0x361d86ecfa1b8c96b646135ef85225663b898fcddb5c7876a2b455dba3bd23d";
+        capabilities: {
+            fightFeed: true;
+            fightFeedByIds: true;
+            fightBuyPagination: true;
+            relicFeed: true;
+            relicBatch: true;
+            relicOwnerPage: true;
+            fighterBatch: true;
+            gachaPoolAggregate: true;
+            gachaAvailableTokenIds: true;
+            accountFightFeed: true;
+            gachaUserStates: true;
+        };
+    };
 }>;
 
 // @public (undocumented)
-export type NetworkName = "mainnet" | "sepolia-dev" | "sepolia-staging";
+export type NetworkName = "mainnet" | "sepolia-dev" | "sepolia-staging" | "katana";
 
 // @public (undocumented)
 export function normalizeAddress(value: string | number | bigint, label?: string): Address;
@@ -2726,6 +2828,10 @@ export const UPSTREAM_DEPLOYMENTS: {
         readonly "sepolia-staging": {
             readonly commit: "ce5e450fcafc552bd7faacc74a83f9ae611c381a";
             readonly sha256: "c94b569c20435dd5fd0edeb35c80b15dc3db29ac09d5822baed20c3b53561a0e";
+        };
+        readonly katana: {
+            readonly commit: "b29c195fac90ba0d55f2b9642e1d7c789bb1674e";
+            readonly sha256: "";
         };
     };
 };

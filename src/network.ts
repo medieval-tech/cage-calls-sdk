@@ -171,4 +171,4 @@ export function createCapabilityRegistry(network: CageCallsNetwork, rpc: RpcTran
 }
 
 export { NETWORK_PRESETS } from "./generated/deployments.js";
-export { MAINNET_PRESET, SEPOLIA_DEV_PRESET, SEPOLIA_STAGING_PRESET, UPSTREAM_DEPLOYMENTS } from "./generated/deployments.js";
+export { MAINNET_PRESET, SEPOLIA_DEV_PRESET, SEPOLIA_STAGING_PRESET, KATANA_PRESET, UPSTREAM_DEPLOYMENTS } from "./generated/deployments.js";
