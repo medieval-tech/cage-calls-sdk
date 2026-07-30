@@ -36,6 +36,20 @@ jobs:
       - name: Ensure npm supports trusted publishing
         run: npm install --global npm@^11.5.1
       - run: pnpm install --frozen-lockfile
+      # Fail fast on an unbumped version. Without this the job runs a full
+      # install/check/build and only fails at the very end with
+      # "You cannot publish over the previously published versions", which is an
+      # easy mistake to make when the release commit and the feature commit are
+      # separate.
+      - name: Verify version is not already published
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          echo "Publishing $NAME@$VERSION"
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "::error::$NAME@$VERSION is already published. Bump the version in package.json."
+            exit 1
+          fi
       - run: pnpm check
       - name: Verify package contents
         run: npm pack --dry-run
