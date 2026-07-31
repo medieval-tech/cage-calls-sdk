@@ -177,7 +177,7 @@ const presets = {
   "katana": {
     "name": "Katana",
     "preset": "katana",
-    "chainId": "0x534e5f5345504f4c4941",
+    "chainId": "0x57505f4341474543414c4c53",
     "namespace": "pm",
     "deploymentRevision": "b29c195fac90ba0d55f2b9642e1d7c789bb1674e",
     "worldAddress": "0x426c2e7fa41481653b60cc1c5c7ffef5667d01065b506bbaa6bf95b897b6645",
@@ -209,7 +209,7 @@ const presets = {
     },
     "toriiUrl": "https://torii-katana-dev.medievaltech.xyz",
     "cartridgeRpcUrl": "https://katana-dev.medievaltech.xyz",
-    "vrfAddress": "0x361d86ecfa1b8c96b646135ef85225663b898fcddb5c7876a2b455dba3bd23d",
+    "vrfAddress": "0x4da58dd0cf16f001b618f5461632cd3cb1d3506254a5c5c62dce6b037de7490",
     "capabilities": {
       "fightFeed": true,
       "fightFeedByIds": true,

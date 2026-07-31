@@ -218,11 +218,11 @@
       }
     },
     "katana": {
-      "chainId": "0x534e5f5345504f4c4941",
+      "chainId": "0x57505f4341474543414c4c53",
       "worldAddress": "0x426c2e7fa41481653b60cc1c5c7ffef5667d01065b506bbaa6bf95b897b6645",
       "toriiUrl": "https://torii-katana-dev.medievaltech.xyz",
       "cartridgeRpcUrl": "https://katana-dev.medievaltech.xyz",
-      "vrfAddress": "0x361d86ecfa1b8c96b646135ef85225663b898fcddb5c7876a2b455dba3bd23d",
+      "vrfAddress": "0x4da58dd0cf16f001b618f5461632cd3cb1d3506254a5c5c62dce6b037de7490",
       "contracts": {
         "CALLS": [
           "0x797f90b9fd6cb3dc57e44997794a232d740c3c2344901042dbfb2d1b3d5b49b",

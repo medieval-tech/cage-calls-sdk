@@ -49,6 +49,16 @@ for (const name of names) {
     // Per-network override, falling back to the shared Cartridge VRF. Katana
     // deploys its own VRF provider at startup, so it cannot use the shared one —
     // that contract does not exist on that chain.
+    //
+    // Katana's address is fully deterministic and does NOT vary with the genesis
+    // account set: `crates/cartridge/src/vrf/server/bootstrap.rs` derives it from
+    // salt 0x54321 + the `CartridgeVrfAccount` class hash + the pubkey of the
+    // hardcoded secret 0x111, deployed via UDC with unique=false. It moves only
+    // when a Katana upgrade changes that class hash, so re-check it on every
+    // Katana version bump. Getting it wrong is not silently harmless: Katana's VRF
+    // middleware rejects a `request_random` aimed anywhere else with
+    // `VrfInvalidTarget`, and Gacha's on-chain `consume_random` would call a
+    // contract that isn't there.
     vrfAddress: network.vrfAddress ?? input.vrfAddress,
     capabilities: network.capabilities,
   };
