@@ -1461,7 +1461,7 @@ export function ipfsPath(uri: string): string | undefined;
 export const KATANA_PRESET: {
     name: string;
     preset: "katana";
-    chainId: "0x534e5f5345504f4c4941";
+    chainId: "0x57505f4341474543414c4c53";
     namespace: string;
     deploymentRevision: string;
     worldAddress: "0x426c2e7fa41481653b60cc1c5c7ffef5667d01065b506bbaa6bf95b897b6645";
@@ -1493,7 +1493,7 @@ export const KATANA_PRESET: {
     };
     toriiUrl: string;
     cartridgeRpcUrl: string;
-    vrfAddress: "0x361d86ecfa1b8c96b646135ef85225663b898fcddb5c7876a2b455dba3bd23d";
+    vrfAddress: "0x4da58dd0cf16f001b618f5461632cd3cb1d3506254a5c5c62dce6b037de7490";
     capabilities: {
         fightFeed: true;
         fightFeedByIds: true;
@@ -1865,7 +1865,7 @@ export const NETWORK_PRESETS: Readonly<{
     katana: {
         name: string;
         preset: "katana";
-        chainId: "0x534e5f5345504f4c4941";
+        chainId: "0x57505f4341474543414c4c53";
         namespace: string;
         deploymentRevision: string;
         worldAddress: "0x426c2e7fa41481653b60cc1c5c7ffef5667d01065b506bbaa6bf95b897b6645";
@@ -1897,7 +1897,7 @@ export const NETWORK_PRESETS: Readonly<{
         };
         toriiUrl: string;
         cartridgeRpcUrl: string;
-        vrfAddress: "0x361d86ecfa1b8c96b646135ef85225663b898fcddb5c7876a2b455dba3bd23d";
+        vrfAddress: "0x4da58dd0cf16f001b618f5461632cd3cb1d3506254a5c5c62dce6b037de7490";
         capabilities: {
             fightFeed: true;
             fightFeedByIds: true;
