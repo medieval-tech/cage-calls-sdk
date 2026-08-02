@@ -979,6 +979,9 @@ export type DeploymentContracts = Readonly<Record<ContractName, Address>>;
 // @public (undocumented)
 export function deriveFightActionEligibility(input: FightActionEligibilityInput): FightActionEligibility;
 
+// @public
+export function deriveFightOddsSeries(input: FightOddsSeriesInput): FightOddsPoint[];
+
 // @public (undocumented)
 export function deriveGachaActionEligibility(input: GachaActionEligibilityInput): GachaActionEligibility;
 
@@ -1048,6 +1051,9 @@ export interface Fight {
     // (undocumented)
     sponsor: Felt;
 }
+
+// @public
+export const FIGHT_BUY_STAKE = 1000000000000000000n;
 
 // @public (undocumented)
 export interface FightActionEligibility {
@@ -1188,6 +1194,7 @@ export interface FightFeedItem extends Fight {
     endAt: bigint;
     // (undocumented)
     marketCreatedAt: bigint;
+    oddsSeries?: FightOddsPoint[];
     // (undocumented)
     oracle: Address;
     // (undocumented)
@@ -1214,6 +1221,23 @@ export interface FightFeedItem extends Fight {
     vaultNumerators: bigint[];
     // (undocumented)
     viewer: FightViewerState;
+}
+
+// @public (undocumented)
+export interface FightOddsPoint {
+    denominator: bigint;
+    numerators: bigint[];
+    odds: number[];
+    timestamp: bigint;
+}
+
+// @public (undocumented)
+export interface FightOddsSeriesInput {
+    buys: readonly Pick<FightBuy, "choiceIndex" | "boughtAt">[];
+    createdAt: bigint;
+    stake?: bigint;
+    vaultDenominator: bigint;
+    vaultNumerators: readonly bigint[];
 }
 
 // @public (undocumented)

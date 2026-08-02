@@ -8,6 +8,7 @@ export * from "./core/codecs.js";
 export * from "./core/request.js";
 export * from "./core/decoders.js";
 export * from "./core/errors.js";
+export * from "./core/odds.js";
 export * from "./generated/entrypoints.js";
 export * from "./repositories/live.js";
 export * from "./network.js";

@@ -1,5 +1,6 @@
 import { normalizeAddress, normalizeU256, sameAddress } from "../core/codecs.js";
 import { mapToriiFight, mapToriiFightBuy, mapToriiFightWinner, mapToriiMarket, scalarBigInt, scalarNumber } from "../core/decoders.js";
+import { deriveFightOddsSeries } from "../core/odds.js";
 import { createDataResult } from "../core/request.js";
 import type { Address, DataResult, DataWarning, FightBuy, FightFeedItem, FightWinner, Market, RequestOptions, SourceAttempt } from "../core/types.js";
 import { readAllToriiModels, type ToriiModelRead } from "../transports/torii-models.js";
@@ -156,6 +157,7 @@ export async function readToriiFightSnapshots(
     const payouts = Array.from({ length: outcomeCount }, (_, index) => payoutRows.find((row) => row.index === index)?.value ?? 0n);
     const payoutDenominator = payoutDenominators.get(conditionKey)?.[0]?.value ?? 0n;
     const buys = buysByFight.get(fightId.toString()) ?? [];
+    const vaultDenominator = vaultDenominators.get(marketKey)?.[0]?.value ?? 0n;
     const winnerIndex = payouts.findIndex((value) => value > 0n);
     const settled = (market.resolvedAt ?? 0n) > 0n || payoutDenominator > 0n;
     const validWinnerIndex = settled && winnerIndex >= 0 ? winnerIndex : undefined;
@@ -188,9 +190,17 @@ export async function readToriiFightSnapshots(
       resolveAt: market.resolveAt ?? 0n,
       resolvedAt: market.resolvedAt ?? 0n,
       vaultNumerators: vaults,
-      vaultDenominator: vaultDenominators.get(marketKey)?.[0]?.value ?? 0n,
+      vaultDenominator,
       outcomeCounts,
       outcomeShares,
+      ...(fightBuyRead.complete ? {
+        oddsSeries: deriveFightOddsSeries({
+          buys,
+          vaultNumerators: vaults,
+          vaultDenominator,
+          createdAt: fight.createdAt,
+        }),
+      } : {}),
       payoutNumerators: payouts,
       payoutDenominator,
       pot: {

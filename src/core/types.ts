@@ -200,6 +200,17 @@ export interface FightPotState {
   settled: boolean;
 }
 
+export interface FightOddsPoint {
+  /** Unix seconds: fight creation for the seed point, `bought_at` for every buy after it. */
+  timestamp: bigint;
+  /** Vault numerators after this step, one entry per outcome slot. */
+  numerators: bigint[];
+  /** Vault denominator after this step. */
+  denominator: bigint;
+  /** Implied odds per outcome as percentages (0-100); zeros while the denominator is zero. */
+  odds: number[];
+}
+
 export interface FightFeedItem extends Fight {
   marketCreatedAt: bigint;
   conditionId: bigint;
@@ -218,6 +229,11 @@ export interface FightFeedItem extends Fight {
   payoutDenominator: bigint;
   pot: FightPotState;
   viewer: FightViewerState;
+  /**
+   * Odds-over-time reconstructed from the complete buy timeline. Absent when the
+   * read source cannot vouch for it (RPC fallback, truncated buy enumeration).
+   */
+  oddsSeries?: FightOddsPoint[];
 }
 
 export interface FightEvent {
