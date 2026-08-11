@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MAINNET_PRESET, SEPOLIA_DEV_PRESET, type RpcCall } from "../src/index.js";
+import { SEPOLIA_DEV_PRESET, type RpcCall } from "../src/index.js";
 import { createMockRpcTransport, createTestClient } from "../src/testing/index.js";
 import { encodeU256 } from "../src/core/codecs.js";
 import { encodeFightFeed } from "./fixtures.js";
@@ -165,18 +165,4 @@ describe("bounded product reads", () => {
     expect(rpc.calls.filter((call) => call.entrypoint === "get_user_states")).toHaveLength(2);
   });
 
-  it("treats generated unsupported capabilities as authoritative", async () => {
-    const rpc = createMockRpcTransport({ calls: { get_account_fight_feed: ["0"] } });
-    const client = createTestClient({
-      network: MAINNET_PRESET,
-      rpc,
-      capabilities: { fightFeedByIds: true },
-    });
-
-    expect(client.capabilities.diagnostics().fightFeedByIds).toEqual({ supported: true, source: "override" });
-    await client.capabilities.probe("accountFightFeed");
-
-    expect(rpc.calls).toEqual([]);
-    expect(client.capabilities.diagnostics().accountFightFeed).toEqual({ supported: false, source: "preset" });
-  });
 });

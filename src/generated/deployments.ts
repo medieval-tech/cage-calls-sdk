@@ -5,8 +5,8 @@ export const UPSTREAM_DEPLOYMENTS = {
   "repository": "https://github.com/medieval-tech/cage-calls-smartcontracts",
   "manifests": {
     "mainnet": {
-      "commit": "bdb5df7460a20397450c4734d2475c057471c47c",
-      "sha256": "5a01f7129458756af4dde9981e87ac7d40ef6291441e293d246ce43450e05079"
+      "commit": "5b0a7d3c07941cdb1a534ce96d51a86b53ad7a6b",
+      "sha256": "0b56724563dfd5ca3474f459fd71382214cd68f3fe86ec51715032326f42da73"
     },
     "sepolia-dev": {
       "commit": "ce5e450fcafc552bd7faacc74a83f9ae611c381a",
@@ -29,7 +29,7 @@ const presets = {
     "preset": "mainnet",
     "chainId": "0x534e5f4d41494e",
     "namespace": "pm",
-    "deploymentRevision": "bdb5df7460a20397450c4734d2475c057471c47c",
+    "deploymentRevision": "5b0a7d3c07941cdb1a534ce96d51a86b53ad7a6b",
     "worldAddress": "0x662ad99065a4a559811be788dbcf863b6bd96ea7d9a0ed9e4ebe22eb74e564d",
     "contracts": {
       "CALLS": "0xc79fb09624ed4dc9cab576c88675e41b2597488c59b9f8cda22a10295809de",
@@ -46,13 +46,13 @@ const presets = {
     },
     "classHashes": {
       "CALLS": "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300",
-      "CageCallsOracle": "0x6b54f7b9bf5959362df92b163d08a0c9a921736ed0044b8a9ca446c4cd39790",
+      "CageCallsOracle": "0x16ca3bd248cc4eb5cd9869c876871091831da293b2e760bf73739e426b39b23",
       "ConditionalTokens": "0x6435347fd999d80f72fde6e95ca6c8c832ef65bb46630a9fc76ed7fc98e974b",
-      "FightFactory": "0x76c944513ed942a34a398eb6d7715479ab1c63f2ae1f91093e2a9d3b8ea10ed",
-      "FighterRegistry": "0x1ae70de72ac445d345ffaa783db57da5b489b4fe2c97147b6141caa3dcfe6cf",
-      "Gacha": "0x3a2979e2775a2659ba95552a7921bec157a6cba8e1f5a46a19ae4ba1fce852e",
+      "FightFactory": "0x73bc30b7067715a59d40bfccebc2485bf0445c7a70e3222ab6a4faf0d06e603",
+      "FighterRegistry": "0x366b6ae2c4709582b47b8d7d21c7ec66eeae252fd03fad3b9e4598be6c60694",
+      "Gacha": "0x74b81062f5cfaa8c1694ef9bcf1e5084864216de92e88bf05261489bf25cdba",
       "Markets": "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12",
-      "RelicNFT": "0x109910e72e75e100f5354a5061733397b551934b0a310e802bd2fbbdc9417e3",
+      "RelicNFT": "0x7fe51e65a2dd5524462717f2d95435130e8a9874492ea74d8add9f20b6b7696",
       "StrikeTickets": "0x6f5d99084de5e581da00408c0d44b9267a695184c346f69780d4ee2d8e9ebde",
       "VaultFees": "0x424ff30e527d7dd6eef1d2b90c8959411a0a1d8be20e13e2936745634a3c91e",
       "VaultPositions": "0x655bd428d36d54e9b069c9bb66c9149b8d3b8d43c4e6a642bb1922f948ec730"
@@ -61,17 +61,17 @@ const presets = {
     "cartridgeRpcUrl": "https://api.cartridge.gg/x/starknet/mainnet/rpc/v0_9",
     "vrfAddress": "0x051fea4450da9d6aee758bdeba88b2f665bcbf549d2c61421aa724e9ac0ced8f",
     "capabilities": {
-      "fightFeed": false,
-      "fightFeedByIds": false,
-      "fightBuyPagination": false,
-      "relicFeed": false,
-      "relicBatch": false,
-      "relicOwnerPage": false,
-      "fighterBatch": false,
-      "gachaPoolAggregate": false,
-      "gachaAvailableTokenIds": false,
-      "accountFightFeed": false,
-      "gachaUserStates": false
+      "fightFeed": true,
+      "fightFeedByIds": true,
+      "fightBuyPagination": true,
+      "relicFeed": true,
+      "relicBatch": true,
+      "relicOwnerPage": true,
+      "fighterBatch": true,
+      "gachaPoolAggregate": true,
+      "gachaAvailableTokenIds": true,
+      "accountFightFeed": true,
+      "gachaUserStates": true
     }
   },
   "sepolia-dev": {

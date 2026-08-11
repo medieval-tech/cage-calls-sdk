@@ -332,7 +332,8 @@ describe("relic ownership source policy", () => {
     const rpc = createMockRpcTransport({
       calls: {
         balance_of: ["2", "0"],
-        get_relics: new Error("legacy deployment"),
+        max_relic_batch_size: ["20"],
+        get_relics: new Error("aggregate unavailable"),
       },
     });
     const torii = createMockToriiTransport({
@@ -354,7 +355,9 @@ describe("relic ownership source policy", () => {
     expect(response.meta.warnings.map((warning) => warning.code)).toContain("OWNED_RELIC_HYDRATION_FAILED");
     expect(response.meta.warnings.map((warning) => warning.code)).toContain("TORII_METADATA_INCOMPLETE");
     expect(rpc.calls.map((call) => call.entrypoint).sort()).toEqual([
+      "get_relics",
       "get_token_uri",
+      "max_relic_batch_size",
       "relic_data",
     ].sort());
   });

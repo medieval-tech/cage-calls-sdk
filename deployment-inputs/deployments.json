@@ -3,8 +3,8 @@
     "repository": "https://github.com/medieval-tech/cage-calls-smartcontracts",
     "manifests": {
       "mainnet": {
-        "commit": "bdb5df7460a20397450c4734d2475c057471c47c",
-        "sha256": "5a01f7129458756af4dde9981e87ac7d40ef6291441e293d246ce43450e05079"
+        "commit": "5b0a7d3c07941cdb1a534ce96d51a86b53ad7a6b",
+        "sha256": "0b56724563dfd5ca3474f459fd71382214cd68f3fe86ec51715032326f42da73"
       },
       "sepolia-dev": {
         "commit": "ce5e450fcafc552bd7faacc74a83f9ae611c381a",
@@ -34,7 +34,7 @@
         ],
         "CageCallsOracle": [
           "0x6fdc6d75d1cf67e85264a7fdc1526784239d98b6e92b448083056b1d695e6d7",
-          "0x6b54f7b9bf5959362df92b163d08a0c9a921736ed0044b8a9ca446c4cd39790"
+          "0x16ca3bd248cc4eb5cd9869c876871091831da293b2e760bf73739e426b39b23"
         ],
         "ConditionalTokens": [
           "0x1a82fdc46fe31baa218af8a74e1f64318199e8f4c40acf5e2039e3280daee7d",
@@ -42,15 +42,15 @@
         ],
         "FightFactory": [
           "0x4beec9af84d93aa84a6b5c71033ade6fa0de40a2359d8599170a6d544ccbf30",
-          "0x76c944513ed942a34a398eb6d7715479ab1c63f2ae1f91093e2a9d3b8ea10ed"
+          "0x73bc30b7067715a59d40bfccebc2485bf0445c7a70e3222ab6a4faf0d06e603"
         ],
         "FighterRegistry": [
           "0x1fd30557f4cc878c0f269b47917576481a752fe52a3b384536deafd6a857a03",
-          "0x1ae70de72ac445d345ffaa783db57da5b489b4fe2c97147b6141caa3dcfe6cf"
+          "0x366b6ae2c4709582b47b8d7d21c7ec66eeae252fd03fad3b9e4598be6c60694"
         ],
         "Gacha": [
           "0x3ce374b612858e7cf674821f1f17b48b0000c1d45b659e1a2fb532adee499de",
-          "0x3a2979e2775a2659ba95552a7921bec157a6cba8e1f5a46a19ae4ba1fce852e"
+          "0x74b81062f5cfaa8c1694ef9bcf1e5084864216de92e88bf05261489bf25cdba"
         ],
         "Markets": [
           "0x5091800bc514678dfc8d409d7baa506791f3b589b283a795176fd307e20945c",
@@ -58,7 +58,7 @@
         ],
         "RelicNFT": [
           "0x6f63afcf7b5251c82df3b01090b2b43e81727ec5350f7f0a3a6f43203bcc63a",
-          "0x109910e72e75e100f5354a5061733397b551934b0a310e802bd2fbbdc9417e3"
+          "0x7fe51e65a2dd5524462717f2d95435130e8a9874492ea74d8add9f20b6b7696"
         ],
         "StrikeTickets": [
           "0x486a8a492759a4ab622ea19a3f1a6e5b2e784fb6c672346b033f8b7dfc8edd5",
@@ -74,17 +74,17 @@
         ]
       },
       "capabilities": {
-        "fightFeed": false,
-        "fightFeedByIds": false,
-        "fightBuyPagination": false,
-        "relicFeed": false,
-        "relicBatch": false,
-        "relicOwnerPage": false,
-        "fighterBatch": false,
-        "gachaPoolAggregate": false,
-        "gachaAvailableTokenIds": false,
-        "accountFightFeed": false,
-        "gachaUserStates": false
+        "fightFeed": true,
+        "fightFeedByIds": true,
+        "fightBuyPagination": true,
+        "relicFeed": true,
+        "relicBatch": true,
+        "relicOwnerPage": true,
+        "fighterBatch": true,
+        "gachaPoolAggregate": true,
+        "gachaAvailableTokenIds": true,
+        "accountFightFeed": true,
+        "gachaUserStates": true
       }
     },
     "sepolia-dev": {
