@@ -1,6 +1,7 @@
 import { createDataResult, mapConcurrent } from "../core/request.js";
 import { normalizeAddress } from "../core/codecs.js";
 import type { FightsRepository, GachaRepository, RepositoryContext, TokensRepository } from "./index.js";
+import { readToriiFightSnapshots } from "./torii-fights.js";
 import type { RelicsRepository } from "./relics.js";
 import { transportAttemptsFromError } from "../transports/index.js";
 import type {
@@ -378,7 +379,21 @@ export function createAggregateRepositories(
         const relicPage = absorb(relicsRead, "Owned relics", undefined);
         const callsBalance = absorb(balanceRead, "CALLS balance", 0n);
         const snapshots = prefetchedFights === undefined
-          ? await dependencies.fights.feedMany(buys.map((buy) => buy.fightId), { viewer: account }, options)
+          ? await (async () => {
+              // Viewer-scoped hydration: a portfolio spans the account's whole
+              // betting history, and full market snapshots for it grow with
+              // GLOBAL buy volume (measured: 25 MiB for a 58-buy account).
+              // Won fights are still hydrated with full rows inside the viewer
+              // scope, so claim math stays exact — see readToriiFightSnapshots.
+              if (context.torii) {
+                try {
+                  return await readToriiFightSnapshots(context, buys.map((buy) => buy.fightId), account, options, "viewer");
+                } catch (error) {
+                  warnings.push(warning("Viewer-scoped fight snapshots", error));
+                }
+              }
+              return dependencies.fights.feedMany(buys.map((buy) => buy.fightId), { viewer: account }, options);
+            })()
           : undefined;
         if (snapshots) {
           attempts.push(...snapshots.meta.attempts);

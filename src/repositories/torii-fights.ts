@@ -62,13 +62,31 @@ function warnings(reads: readonly ToriiModelRead<unknown>[]): DataWarning[] {
   return reads.flatMap((read) => read.warnings);
 }
 
+/**
+ * scope "market" (default) hydrates full market aggregates: every FightBuy,
+ * FightWinner, and MarketBuy row for the requested fights.
+ *
+ * scope "viewer" restricts the heavy reads to rows the viewer can act on —
+ * FightBuy by buyer, FightWinner by winner, MarketBuy skipped entirely.
+ * Everything a viewer needs to act stays exact: fight/market metadata, vaults,
+ * `pot.winnerIndex`/`settled` (from payouts), and the viewer's own buy/redeem
+ * state including `isWinner`. Cross-account aggregates are NOT computed —
+ * `pot.total`, `pot.claimed`, `winnersCount`, and `previewStrikeTickets` are
+ * explicitly zeroed (never garbage math over partial rows),
+ * `outcomeCounts`/`outcomeShares` hold only the viewer's rows, and
+ * `oddsSeries` is omitted. An account's portfolio spans its whole betting
+ * history, so market scope grows with GLOBAL buy volume; viewer scope stays
+ * proportional to the account's own activity.
+ */
 export async function readToriiFightSnapshots(
   context: RepositoryContext,
   fightIds: readonly bigint[],
   viewerInput: Address,
   options: RequestOptions = {},
+  scope: "market" | "viewer" = "market",
 ): Promise<DataResult<FightFeedItem[]>> {
   if (!context.torii) throw new Error("Torii is required for indexed fight snapshots.");
+  const viewer = normalizeAddress(viewerInput);
   const startedAt = context.now();
   const ids = Array.from(new Set(fightIds.map(String))).map(BigInt);
   if (ids.length === 0) return createDataResult({ data: [], source: "torii", complete: true, attempts: [], warnings: [], startedAt, now: context.now });
@@ -95,13 +113,21 @@ export async function readToriiFightSnapshots(
     });
   }
   const marketFilter = marketIds.map((marketId) => normalizeU256(marketId, "marketId"));
+  const buyWhere = scope === "viewer" ? { fight_idIN: idFilter, buyerEQ: viewer } : { fight_idIN: idFilter };
+  const winnerWhere = scope === "viewer" ? { fight_idIN: idFilter, winnerEQ: viewer } : { fight_idIN: idFilter };
   const [marketRead, vaultNumeratorRead, vaultDenominatorRead, fightBuyRead, fightWinnerRead, marketBuyRead] = await Promise.all([
     readAllToriiModels(context, { model: "Market", selection: MARKET_SELECTION, where: { market_idIN: marketFilter } }, mapToriiMarket, options),
     readAllToriiModels(context, { model: "VaultNumerator", selection: VAULT_NUMERATOR_SELECTION, where: { market_idIN: marketFilter } }, (node): IndexedValue => ({ id: scalarBigInt(node.market_id, "market_id"), index: scalarNumber(node.index, "index"), value: scalarBigInt(node.value, "value") }), options),
     readAllToriiModels(context, { model: "VaultDenominator", selection: VAULT_DENOMINATOR_SELECTION, where: { market_idIN: marketFilter } }, (node): IndexedValue => ({ id: scalarBigInt(node.market_id, "market_id"), value: scalarBigInt(node.value, "value") }), options),
-    readAllToriiModels(context, { model: "FightBuy", selection: FIGHT_BUY_SELECTION, where: { fight_idIN: idFilter } }, mapToriiFightBuy, options),
-    readAllToriiModels(context, { model: "FightWinner", selection: FIGHT_WINNER_SELECTION, where: { fight_idIN: idFilter } }, mapToriiFightWinner, options),
-    readAllToriiModels(context, { model: "MarketBuy", selection: MARKET_BUY_SELECTION, where: { market_idIN: marketFilter } }, (node): IndexedMarketBuy => ({ marketId: scalarBigInt(node.market_id, "market_id"), account: normalizeAddress(String(node.account_address)), amountIn: scalarBigInt(node.amount_in, "amount_in") }), options),
+    readAllToriiModels(context, { model: "FightBuy", selection: FIGHT_BUY_SELECTION, where: buyWhere }, mapToriiFightBuy, options),
+    readAllToriiModels(context, { model: "FightWinner", selection: FIGHT_WINNER_SELECTION, where: winnerWhere }, mapToriiFightWinner, options),
+    // pot.total = Σ of the FightFactory's MarketBuy deposits — but EVERY user
+    // buy routes through the FightFactory, so an address filter matches ~every
+    // row on these markets (measured: 10.8 MiB for a 58-fight portfolio).
+    // Viewer scope zeroes pot.total instead of paying for a full-table sum.
+    scope === "viewer"
+      ? Promise.resolve({ items: [], attempts: [], complete: true, warnings: [] } as ToriiModelRead<IndexedMarketBuy>)
+      : readAllToriiModels(context, { model: "MarketBuy", selection: MARKET_BUY_SELECTION, where: { market_idIN: marketFilter } }, (node): IndexedMarketBuy => ({ marketId: scalarBigInt(node.market_id, "market_id"), account: normalizeAddress(String(node.account_address)), amountIn: scalarBigInt(node.amount_in, "amount_in") }), options),
   ]);
   const conditionIds = marketRead.items.map((market) => market.conditionId);
   const conditionFilter = conditionIds.map((conditionId) => normalizeU256(conditionId, "conditionId"));
@@ -138,7 +164,6 @@ export async function readToriiFightSnapshots(
     marketBuysByMarket.set(key, rows);
   }
 
-  const viewer = normalizeAddress(viewerInput);
   const now = BigInt(Math.floor(context.now() / 1_000));
   const missing: bigint[] = [];
   const snapshots = ids.flatMap((fightId): FightFeedItem[] => {
@@ -169,14 +194,16 @@ export async function readToriiFightSnapshots(
     const totalWinnerShares = validWinnerIndex === undefined || validWinnerIndex === 2 ? 0n : outcomeShares[validWinnerIndex] ?? 0n;
     const winnerRows = winnersByFight.get(fightId.toString()) ?? [];
     const claimFor = (buy: FightBuy | undefined) => buy && totalWinnerShares > 0n ? buy.amount * potTotal / totalWinnerShares : 0n;
-    const claimed = winnerRows.reduce((sum, winner) => {
+    // Viewer scope holds only the viewer's buy/winner rows, so any math that
+    // divides by ALL winner shares would be confidently wrong — zero it.
+    const claimed = scope === "viewer" ? 0n : winnerRows.reduce((sum, winner) => {
       if (!winner.redeemed) return sum;
       return sum + claimFor(buys.find((buy) => sameAddress(buy.buyer, winner.winner)));
     }, 0n);
     const viewerBuy = buys.find((buy) => sameAddress(buy.buyer, viewer));
     const viewerWinner = winnerRows.find((winner) => sameAddress(winner.winner, viewer));
     const isWinner = Boolean(viewerBuy && validWinnerIndex !== undefined && validWinnerIndex !== 2 && viewerBuy.choiceIndex === validWinnerIndex);
-    const previewStrikeTickets = isWinner ? strikeTicketsForClaim(claimFor(viewerBuy)) : 0n;
+    const previewStrikeTickets = scope === "viewer" || !isWinner ? 0n : strikeTicketsForClaim(claimFor(viewerBuy));
     const closed = settled || now >= (market.endAt ?? 0n);
     return [{
       ...fight,
@@ -193,7 +220,7 @@ export async function readToriiFightSnapshots(
       vaultDenominator,
       outcomeCounts,
       outcomeShares,
-      ...(fightBuyRead.complete ? {
+      ...(scope === "market" && fightBuyRead.complete ? {
         oddsSeries: deriveFightOddsSeries({
           buys,
           vaultNumerators: vaults,
@@ -207,7 +234,7 @@ export async function readToriiFightSnapshots(
         total: potTotal,
         claimed,
         ...(validWinnerIndex === undefined ? {} : { winnerIndex: validWinnerIndex }),
-        winnersCount: validWinnerIndex === undefined || validWinnerIndex === 2 ? 0n : outcomeCounts[validWinnerIndex] ?? 0n,
+        winnersCount: scope === "viewer" || validWinnerIndex === undefined || validWinnerIndex === 2 ? 0n : outcomeCounts[validWinnerIndex] ?? 0n,
         closed,
         settled,
       },
