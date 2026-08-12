@@ -23,6 +23,7 @@ import {
   normalizeFightViewerState,
   scalarBigInt,
   scalarNumber,
+  scalarString,
 } from "../core/decoders.js";
 import { AllSourcesFailedError, UnsupportedCapabilityError, ValidationError } from "../core/errors.js";
 import type { CapabilityRegistry } from "../network.js";
@@ -96,6 +97,20 @@ function rpcCall(context: RepositoryContext, contract: keyof CageCallsNetwork["c
   return context.rpc.call({ contractAddress: context.network.contracts[contract], entrypoint, calldata }, options);
 }
 
+// Composite reads (grouping, cross-model joins) report the transport that
+// actually served them; "derived" is reserved for genuinely mixed sources.
+function compositeSource(attempts: readonly SourceAttempt[]): DataResult<unknown>["meta"]["source"] {
+  if (attempts.length > 0 && attempts.every((attempt) => attempt.source === "torii")) return "torii";
+  if (attempts.length > 0 && attempts.every((attempt) => attempt.source === "starknet-rpc")) return "starknet-rpc";
+  return "derived";
+}
+
+function toriiFallbackWarning(context: RepositoryContext, operation: string, error: unknown): DataWarning {
+  const message = error instanceof Error ? error.message : String(error);
+  context.logger?.warn?.("Torii read failed; falling back.", { operation, error: message });
+  return { code: "TORII_FALLBACK", message: `${operation}: ${message}`, source: "torii" };
+}
+
 const FIGHTER_SELECTION = ["fighter_id", "name", "weight_class", "active"] as const;
 const FIGHT_SELECTION = [
   "fight_id", "season_id", "event", "market_id", "fighter_a_id", "fighter_a_name",
@@ -103,6 +118,9 @@ const FIGHT_SELECTION = [
   "fighter_b_name", "fighter_b_weight_class", "choice_b_value", "choice_b_label",
   "created_at", "is_dev", "sponsor",
 ] as const;
+// Slim projection for resolving an event's fight ids in one scan; full
+// snapshots are then hydrated for the matched ids only.
+const FIGHT_INDEX_SELECTION = ["fight_id", "season_id", "event"] as const;
 const FIGHT_BUY_SELECTION = ["fight_id", "buyer", "market_id", "choice_index", "amount", "bought_at"] as const;
 const FIGHT_WINNER_SELECTION = ["fight_id", "winner", "choice_index", "redeemed"] as const;
 const MARKET_SELECTION = [
@@ -501,6 +519,7 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
       const startedAt = context.now();
       const size = clampPageSize(input.limit, 20, 20);
       const viewer = normalizeAddress(input.viewer ?? "0x0");
+      const fallbackWarnings: DataWarning[] = [];
       if (context.torii) {
         try {
           const start = input.cursor ?? 0n;
@@ -520,8 +539,9 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
             cursor,
             hasMore: response.data.pageInfo.hasNextPage && cursor > 0n,
           }, [...response.attempts, ...snapshots.meta.attempts], snapshots.meta.complete, snapshots.meta.warnings);
-        } catch {
+        } catch (error) {
           // Only the aggregate feed view may be used as an RPC fallback.
+          fallbackWarnings.push(toriiFallbackWarning(context, "fights.feed", error));
         }
       }
       const supported = context.capabilities.has("fightFeed") || await context.capabilities.probe("fightFeed", options.signal);
@@ -535,12 +555,13 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
         const items = decodeFightFeedRpc(response.data);
         const oldest = items.at(-1)?.fightId ?? 0n;
         const cursor = oldest > 1n ? oldest - 1n : 0n;
-        return result(context, startedAt, "starknet-rpc", { items, cursor, hasMore: items.length === size && cursor > 0n }, response.attempts);
+        return result(context, startedAt, "starknet-rpc", { items, cursor, hasMore: items.length === size && cursor > 0n }, response.attempts, true, fallbackWarnings);
       }
       throw new UnsupportedCapabilityError("fight feed without Torii or get_fight_feed");
     },
     async accountFeed(account, input = {}, options = {}) {
       const startedAt = context.now();
+      const fallbackWarnings: DataWarning[] = [];
       if (context.torii) {
         try {
           const portfolio = await createFightsRepository(context).portfolioAll(account, options);
@@ -558,8 +579,9 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
             ...(hasMore && oldest > 1n ? { cursor: oldest - 1n } : {}),
             hasMore,
           }, [...portfolio.meta.attempts, ...snapshots.meta.attempts], portfolio.meta.complete && snapshots.meta.complete, [...portfolio.meta.warnings, ...snapshots.meta.warnings]);
-        } catch {
+        } catch (error) {
           // Only the aggregate account feed may be used as an RPC fallback.
+          fallbackWarnings.push(toriiFallbackWarning(context, "fights.accountFeed", error));
         }
       }
       const supported = context.capabilities.has("accountFightFeed")
@@ -578,7 +600,7 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
         items,
         cursor,
         hasMore: items.length === size && cursor > 0n,
-      }, response.attempts);
+      }, response.attempts, true, fallbackWarnings);
     },
     async accountFeedAll(account, options = {}) {
       const startedAt = context.now();
@@ -1532,7 +1554,7 @@ export function createFightEventsRepository(context: RepositoryContext, fights: 
   const page = async (input: { limit?: number; cursor?: bigint; viewer?: Address; now?: bigint } = {}, options: RequestOptions = {}) => {
     const startedAt = context.now();
     const response = await fights.feed(input, options);
-    return result(context, startedAt, "derived", {
+    return result(context, startedAt, compositeSource(response.meta.attempts), {
       items: group(response.data.items, input.now ?? BigInt(Math.floor(context.now() / 1_000))),
       ...(response.data.cursor === undefined ? {} : { cursor: response.data.cursor }),
       hasMore: response.data.hasMore,
@@ -1561,12 +1583,59 @@ export function createFightEventsRepository(context: RepositoryContext, fights: 
         return result(
           context,
           startedAt,
-          "derived",
+          compositeSource(attempts),
           group(matches, input.now ?? BigInt(Math.floor(context.now() / 1_000)))[0],
           attempts,
           complete,
           warnings,
         );
+      }
+      if (context.torii) {
+        // Fast path: one slim index scan resolves the event's fight ids, then
+        // only those fights are hydrated. The event match happens client-side
+        // because torii 1.8.16 rejects where-filters on ByteArray columns
+        // ("Matching variant not found"), and an event's fights are a tiny
+        // slice of the feed the cursor walk below would otherwise fetch whole.
+        try {
+          const index = await readAllToriiModels(context, {
+            model: "Fight",
+            selection: FIGHT_INDEX_SELECTION,
+          }, (node) => ({
+            fightId: scalarBigInt(node.fight_id, "fight_id"),
+            seasonId: scalarBigInt(node.season_id, "season_id"),
+            eventName: scalarString(node.event, "event"),
+          }), options);
+          attempts.push(...index.attempts);
+          warnings.push(...index.warnings);
+          if (index.complete) {
+            const ids = index.items
+              .filter((row) => row.eventName === eventName && (input.seasonId === undefined || row.seasonId === input.seasonId))
+              .map((row) => row.fightId);
+            const snapshots = await readToriiFightSnapshots(context, ids, normalizeAddress(input.viewer ?? "0x0"), options);
+            attempts.push(...snapshots.meta.attempts);
+            warnings.push(...snapshots.meta.warnings);
+            const expectedFights = input.expectedFightCount;
+            const complete = snapshots.meta.complete && (expectedFights === undefined || snapshots.data.length >= expectedFights);
+            if (expectedFights !== undefined && snapshots.data.length < expectedFights) warnings.push({
+              code: "PARTIAL_AGGREGATE",
+              message: `Event lookup matched ${snapshots.data.length} of ${expectedFights} expected fights.`,
+              source: "derived",
+            });
+            return result(
+              context,
+              startedAt,
+              compositeSource(attempts),
+              group(snapshots.data, input.now ?? BigInt(Math.floor(context.now() / 1_000)))[0],
+              attempts,
+              complete,
+              warnings,
+            );
+          }
+          // Index scan hit a traversal budget — its warnings are recorded;
+          // the exhaustive cursor walk below decides completeness instead.
+        } catch (error) {
+          warnings.push(toriiFallbackWarning(context, "fightEvents.get", error));
+        }
       }
       let cursor = input.cursor ?? 0n;
       let exhausted = false;
@@ -1595,12 +1664,12 @@ export function createFightEventsRepository(context: RepositoryContext, fights: 
           : `Event lookup found ${matches.length} of ${expected} expected fights.`,
         source: "starknet-rpc",
       });
-      return result(context, startedAt, "derived", grouped, attempts, complete, warnings);
+      return result(context, startedAt, compositeSource(attempts), grouped, attempts, complete, warnings);
     },
     async all(input = {}, options = {}) {
       const startedAt = context.now();
       const response = await fights.feedAll({ ...(input.viewer ? { viewer: input.viewer } : {}) }, options);
-      return result(context, startedAt, "derived", group(response.data, input.now ?? BigInt(Math.floor(context.now() / 1_000))), response.meta.attempts, response.meta.complete, response.meta.warnings);
+      return result(context, startedAt, compositeSource(response.meta.attempts), group(response.data, input.now ?? BigInt(Math.floor(context.now() / 1_000))), response.meta.attempts, response.meta.complete, response.meta.warnings);
     },
     page,
     list: page,
