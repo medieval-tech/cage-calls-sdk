@@ -566,3 +566,124 @@ describe("relic ownership source policy", () => {
     expect(rpc.calls).toEqual([]);
   });
 });
+
+describe("relic event enrichment", () => {
+  const fightRow = (fightId: string, eventName: string) => ({
+    fight_id: fightId,
+    season_id: "1",
+    event: eventName,
+    market_id: "9",
+    fighter_a_id: "1",
+    fighter_a_name: "A",
+    fighter_a_weight_class: "Lightweight",
+    choice_a_value: "1",
+    choice_a_label: "A",
+    fighter_b_id: "2",
+    fighter_b_name: "B",
+    fighter_b_weight_class: "Lightweight",
+    choice_b_value: "2",
+    choice_b_label: "B",
+    created_at: "1700000000",
+    is_dev: false,
+    sponsor: "0",
+  });
+
+  const connection = (nodes: Record<string, unknown>[]) => ({
+    totalCount: nodes.length,
+    edges: nodes.map((node, index) => ({ cursor: String(index), node })),
+    pageInfo: { hasNextPage: false },
+  });
+
+  const relicTokenWithFight = (tokenId: bigint, fightId: string) => {
+    const attributes = [
+      { trait_type: "Event", value: "AMMA Fight Night" },
+      { trait_type: "Fight ID", value: fightId },
+    ];
+    return {
+      __typename: "ERC721__Token",
+      tokenId: tokenId.toString(),
+      contractAddress: MAINNET_PRESET.contracts.RelicNFT,
+      metadataName: `Relic #${tokenId}`,
+      metadata: JSON.stringify({
+        name: `Relic #${tokenId}`,
+        image: `ipfs://image-${tokenId}`,
+        attributes,
+      }),
+      metadataAttributes: JSON.stringify(attributes),
+    };
+  };
+
+  it("stamps owned relics with their fight's event key", async () => {
+    const rpc = createMockRpcTransport();
+    const torii = createMockToriiTransport({
+      tokenBalances: {
+        totalCount: 2,
+        edges: [
+          { node: { tokenMetadata: relicTokenWithFight(2n, "84") } },
+          { node: { tokenMetadata: relicTokenWithFight(1n, "85") } },
+        ],
+      },
+      models: {
+        Fight: connection([
+          fightRow("84", "cc898609-1c27-4c83-8c24-4c4222156a30"),
+          fightRow("85", ""),
+        ]),
+      },
+    });
+    const client = createCageCallsClient({ network: "mainnet", transports: { rpc, torii } });
+
+    const response = await client.relics.owned(owner);
+
+    const byToken = new Map(response.data.items.map((relic) => [relic.tokenId, relic]));
+    expect(byToken.get(2n)?.fightId).toBe(84n);
+    expect(byToken.get(2n)?.eventId).toBe("cc898609-1c27-4c83-8c24-4c4222156a30");
+    // A fight whose on-chain event field is empty yields no event key.
+    expect(byToken.get(1n)?.fightId).toBe(85n);
+    expect(byToken.get(1n)?.eventId).toBeUndefined();
+    expect(rpc.calls).toEqual([]);
+  });
+
+  it("returns the inventory with a warning when the fight join fails", async () => {
+    const rpc = createMockRpcTransport();
+    const torii = createMockToriiTransport({
+      tokenBalances: {
+        totalCount: 1,
+        edges: [{ node: { tokenMetadata: relicTokenWithFight(1n, "84") } }],
+      },
+      models: { Fight: new Error("torii offline") },
+    });
+    const client = createCageCallsClient({ network: "mainnet", transports: { rpc, torii } });
+
+    const response = await client.relics.owned(owner);
+
+    expect(response.data.items).toHaveLength(1);
+    expect(response.data.items[0]?.fightId).toBe(84n);
+    expect(response.data.items[0]?.eventId).toBeUndefined();
+    expect(response.meta.warnings.map((warning) => warning.code)).toContain("RELIC_EVENT_ENRICHMENT_FAILED");
+  });
+
+  it("skips the fight join entirely when no relic resolves a fight id", async () => {
+    let fightQueries = 0;
+    const rpc = createMockRpcTransport();
+    const torii = createMockToriiTransport({
+      tokenBalances: {
+        totalCount: 1,
+        edges: [{ node: { tokenMetadata: toriiToken(1n, MAINNET_PRESET.contracts.RelicNFT) } }],
+      },
+      models: {
+        Fight: () => {
+          fightQueries += 1;
+          return connection([]);
+        },
+      },
+    });
+    const client = createCageCallsClient({ network: "mainnet", transports: { rpc, torii } });
+
+    const response = await client.relics.owned(owner);
+
+    expect(response.data.items).toHaveLength(1);
+    expect(response.data.items[0]?.eventId).toBeUndefined();
+    expect(response.data.items[0]?.fightId).toBeUndefined();
+    expect(fightQueries).toBe(0);
+  });
+});

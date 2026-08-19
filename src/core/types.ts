@@ -339,6 +339,16 @@ export interface Relic {
   definitionId?: bigint;
   editionNumber?: bigint;
   eventName?: string;
+  /**
+   * Unique key of the fight card this relic was earned on — its fight's
+   * on-chain `event` field, which carries the organizer's event UUID on
+   * mainnet. Display names (`eventName`) collide across cards; this key does
+   * not. Resolved by joining the relic's fight, so it is absent when no fight
+   * id is resolvable or the fight read failed (RELIC_EVENT_ENRICHMENT_FAILED).
+   */
+  eventId?: string;
+  /** Fight this relic was earned on, from on-chain relic data or the "Fight ID" metadata attribute. */
+  fightId?: bigint;
   tokenUri?: string;
   metadata?: RelicMetadata;
   name?: string;

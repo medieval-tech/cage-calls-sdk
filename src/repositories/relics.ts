@@ -8,7 +8,7 @@ import {
   decodeSingleU256,
 } from "../core/decoders.js";
 import { AllSourcesFailedError, TransportError, UnsupportedCapabilityError, ValidationError } from "../core/errors.js";
-import { createFightersRepository, type RepositoryContext } from "./index.js";
+import { createFightersRepository, createFightsRepository, type RepositoryContext } from "./index.js";
 import { summarizeRelicCollection, type RelicCollectionStats, type RelicStatsFilter } from "./relic-stats.js";
 import type {
   MetadataTransport,
@@ -270,6 +270,80 @@ async function hydrateJson(context: RelicContext, relic: Relic, attempts: Source
   }
 }
 
+function attributeBigInt(value: unknown): bigint | undefined {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return BigInt(value);
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const parsed = BigInt(value.trim());
+    return parsed > 0n ? parsed : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * The fight a relic was earned on. On-chain relic data carries it directly;
+ * Torii token rows only carry the JSON attribute list, where the mint
+ * pipeline writes it as a "Fight ID" (or "Fight") trait.
+ */
+function relicFightId(relic: Relic): bigint | undefined {
+  const fromChain = relic.metadata?.fightId;
+  if (fromChain !== undefined && fromChain > 0n) return fromChain;
+  const wanted = new Set(["fight_id", "fight"]);
+  for (const attribute of relic.attributes) {
+    if (!attribute.traitType) continue;
+    const key = attribute.traitType.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    if (!wanted.has(key)) continue;
+    const parsed = attributeBigInt(attribute.value);
+    if (parsed !== undefined) return parsed;
+  }
+  return undefined;
+}
+
+/**
+ * Stamp each relic with the fight it was earned on and that fight's event key.
+ *
+ * The relic itself stores only a display `eventName`, which duplicates across
+ * fight cards; the unique key lives one join away, on the fight's `event`
+ * field (the organizer's event UUID on mainnet). A failed fight read degrades
+ * to relics without `eventId` — an eventless filter beats a failed inventory —
+ * reported as a warning, never an error.
+ */
+async function enrichRelicEvents(
+  context: RelicContext,
+  relics: readonly Relic[],
+  attempts: SourceAttempt[],
+  warnings: DataWarning[],
+  options: RequestOptions,
+): Promise<Relic[]> {
+  const withFight = relics.map((relic) => {
+    const fightId = relicFightId(relic);
+    return fightId === undefined ? relic : { ...relic, fightId };
+  });
+  const distinct = Array.from(new Set(
+    withFight.flatMap((relic) => (relic.fightId === undefined ? [] : [relic.fightId.toString()])),
+  )).map(BigInt);
+  if (distinct.length === 0) return withFight;
+  try {
+    const fights = await createFightsRepository(context).getMany(distinct, options);
+    attempts.push(...fights.meta.attempts);
+    warnings.push(...fights.meta.warnings);
+    const eventByFight = new Map(
+      fights.data.flatMap((fight) => (fight.eventName ? [[fight.fightId.toString(), fight.eventName] as const] : [])),
+    );
+    return withFight.map((relic) => {
+      const eventId = relic.fightId === undefined ? undefined : eventByFight.get(relic.fightId.toString());
+      return eventId === undefined ? relic : { ...relic, eventId };
+    });
+  } catch (error) {
+    attempts.push(...transportAttemptsFromError(error));
+    warnings.push({
+      code: "RELIC_EVENT_ENRICHMENT_FAILED",
+      message: "Relic event ids could not be resolved from their fights.",
+      source: context.torii ? "torii" : "starknet-rpc",
+    });
+    return withFight;
+  }
+}
+
 export function createRelicsRepository(context: RelicContext): RelicsRepository {
   let detectedRelicBatchLimit: number | undefined;
 
@@ -311,7 +385,8 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     const warnings: DataWarning[] = [];
     const structured = await getStructured(tokenId, options);
     const relic = await hydrateJson(context, structured.relic, structured.attempts, warnings, options);
-    return toResult(context, startedAt, "starknet-rpc", relic, structured.attempts, metadataComplete(relic), warnings);
+    const [enriched] = await enrichRelicEvents(context, [relic], structured.attempts, warnings, options);
+    return toResult(context, startedAt, "starknet-rpc", enriched ?? relic, structured.attempts, metadataComplete(relic), warnings);
   };
 
   function rateLimited(error: unknown): boolean {
@@ -416,7 +491,8 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       resolveRequestBudget(context.budget, options).maxConcurrency,
       (relic) => hydrateJson(context, relic, attempts, warnings, options),
     );
-    return toResult(context, startedAt, "starknet-rpc", relics, attempts, structured.meta.complete && relics.every(metadataComplete), warnings);
+    const enriched = await enrichRelicEvents(context, relics, attempts, warnings, options);
+    return toResult(context, startedAt, "starknet-rpc", enriched, attempts, structured.meta.complete && relics.every(metadataComplete), warnings);
   };
 
   async function hydrateOwnedToriiRelics(
@@ -857,9 +933,10 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     if (context.torii) {
       try {
         toriiInventory = await toriiOwned(owner, attempts, warnings, options);
-        const torii = hydrateExternal
+        const hydrated = hydrateExternal
           ? await hydrateOwnedToriiRelics(toriiInventory.relics, attempts, warnings, options)
           : toriiInventory.relics;
+        const torii = await enrichRelicEvents(context, hydrated, attempts, warnings, options);
         const metadataVerified = !hydrateExternal || torii.every(metadataComplete);
         if (!metadataVerified) {
           warnings.push({
@@ -903,8 +980,9 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
       if (discovered.relics.length === 0 && balance > 0n) throw new AllSourcesFailedError("relics.owned", attempts);
       if (!verified) warnings.push({ code: "RPC_BALANCE_MISMATCH", message: `RPC discovery found ${discovered.relics.length} of ${balance} relics.`, source: "starknet-rpc" });
       const inventoryComplete = verified || discovered.complete;
+      const enriched = await enrichRelicEvents(context, discovered.relics, attempts, warnings, options);
       return toResult(context, startedAt, "starknet-rpc", {
-        items: discovered.relics.map((relic) => ({ ...relic, owner, ownershipSource: "starknet-rpc" as const })),
+        items: enriched.map((relic) => ({ ...relic, owner, ownershipSource: "starknet-rpc" as const })),
         hasMore: !inventoryComplete,
         provenance: { owner, onchainBalance: balance, ownershipSource: "starknet-rpc", verified },
       }, attempts, verified && (!hydrateExternal || discovered.relics.every(metadataComplete)), warnings);
