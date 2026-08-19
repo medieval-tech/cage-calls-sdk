@@ -2053,8 +2053,10 @@ export interface Relic {
     description?: string;
     // (undocumented)
     editionNumber?: bigint;
+    eventId?: string;
     // (undocumented)
     eventName?: string;
+    fightId?: bigint;
     // (undocumented)
     image?: string;
     // (undocumented)
