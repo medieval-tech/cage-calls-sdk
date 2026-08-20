@@ -1,10 +1,12 @@
 import { normalizeAddress, normalizeU256, sameAddress } from "../core/codecs.js";
 import { mapToriiFight, mapToriiFightBuy, mapToriiFightWinner, mapToriiMarket, scalarBigInt, scalarNumber } from "../core/decoders.js";
 import { deriveFightOddsSeries } from "../core/odds.js";
+import { strikeTicketsBase } from "../core/quote.js";
 import { createDataResult } from "../core/request.js";
 import type { Address, DataResult, DataWarning, FightBuy, FightFeedItem, FightWinner, Market, RequestOptions, SourceAttempt } from "../core/types.js";
 import { readAllToriiModels, type ToriiModelRead } from "../transports/torii-models.js";
 import type { RepositoryContext } from "./index.js";
+import { isLockedOddsFight, resolveLockedOddsCutover } from "./locked-odds.js";
 
 const FIGHT_SELECTION = [
   "fight_id", "season_id", "event", "market_id", "fighter_a_id", "fighter_a_name",
@@ -47,13 +49,6 @@ function valuesById(rows: readonly IndexedValue[]): Map<string, IndexedValue[]> 
   return values;
 }
 
-function strikeTicketsForClaim(claimable: bigint): bigint {
-  if (claimable <= 0n) return 0n;
-  const whole = claimable / 1_000_000_000_000_000_000n;
-  const amount = whole === 0n ? 1n : whole;
-  return amount > 10n ? 10n : amount;
-}
-
 function attempts(reads: readonly ToriiModelRead<unknown>[]): SourceAttempt[] {
   return reads.flatMap((read) => read.attempts);
 }
@@ -71,10 +66,12 @@ function warnings(reads: readonly ToriiModelRead<unknown>[]): DataWarning[] {
  * Everything a viewer needs to act stays exact: fight/market metadata, vaults,
  * `pot.winnerIndex`/`settled` (from payouts), and the viewer's own buy/redeem
  * state including `isWinner`. Cross-account aggregates are NOT computed —
- * `pot.total`, `pot.claimed`, `winnersCount`, and `previewStrikeTickets` are
- * explicitly zeroed (never garbage math over partial rows),
- * `outcomeCounts`/`outcomeShares` hold only the viewer's rows, and
- * `oddsSeries` is omitted. An account's portfolio spans its whole betting
+ * `pot.total`, `pot.claimed`, and `winnersCount` are explicitly zeroed (never
+ * garbage math over partial rows), `outcomeCounts`/`outcomeShares` hold only
+ * the viewer's rows, and `oddsSeries` is omitted. `previewStrikeTickets` stays
+ * exact for locked-odds fights in both scopes (it only needs the viewer's own
+ * shares) and is zeroed in viewer scope for legacy fights, whose claim math
+ * divides by ALL winner shares. An account's portfolio spans its whole betting
  * history, so market scope grows with GLOBAL buy volume; viewer scope stays
  * proportional to the account's own activity.
  */
@@ -90,6 +87,8 @@ export async function readToriiFightSnapshots(
   const startedAt = context.now();
   const ids = Array.from(new Set(fightIds.map(String))).map(BigInt);
   if (ids.length === 0) return createDataResult({ data: [], source: "torii", complete: true, attempts: [], warnings: [], startedAt, now: context.now });
+  // Set once on-chain and cached, so this is almost always free. 0 = inactive.
+  const lockedOddsCutover = await resolveLockedOddsCutover(context, options);
   const idFilter = ids.map((fightId) => normalizeU256(fightId, "fightId"));
   const fightRead = await readAllToriiModels(context, {
     model: "Fight",
@@ -193,17 +192,31 @@ export async function readToriiFightSnapshots(
       .reduce((sum, buy) => sum + buy.amountIn, 0n);
     const totalWinnerShares = validWinnerIndex === undefined || validWinnerIndex === 2 ? 0n : outcomeShares[validWinnerIndex] ?? 0n;
     const winnerRows = winnersByFight.get(fightId.toString()) ?? [];
-    const claimFor = (buy: FightBuy | undefined) => buy && totalWinnerShares > 0n ? buy.amount * potTotal / totalWinnerShares : 0n;
-    // Viewer scope holds only the viewer's buy/winner rows, so any math that
-    // divides by ALL winner shares would be confidently wrong — zero it.
-    const claimed = scope === "viewer" ? 0n : winnerRows.reduce((sum, winner) => {
+    const lockedOdds = isLockedOddsFight(lockedOddsCutover, fightId);
+    // Locked-odds fights pay the locked shares directly; legacy fights
+    // renormalize to the pot across all winner shares.
+    const claimFor = (buy: FightBuy | undefined) => {
+      if (!buy) return 0n;
+      if (lockedOdds) return buy.amount;
+      return totalWinnerShares > 0n ? buy.amount * potTotal / totalWinnerShares : 0n;
+    };
+    // Locked-odds fights burn the whole pot at settle (fight_pot_claimed jumps
+    // to pot_total); legacy fights claim per redemption. Viewer scope zeroes
+    // both — its potTotal is 0 and legacy math divides by ALL winner shares.
+    const claimed = scope === "viewer" ? 0n : lockedOdds ? (settled ? potTotal : 0n) : winnerRows.reduce((sum, winner) => {
       if (!winner.redeemed) return sum;
       return sum + claimFor(buys.find((buy) => sameAddress(buy.buyer, winner.winner)));
     }, 0n);
     const viewerBuy = buys.find((buy) => sameAddress(buy.buyer, viewer));
     const viewerWinner = winnerRows.find((winner) => sameAddress(winner.winner, viewer));
     const isWinner = Boolean(viewerBuy && validWinnerIndex !== undefined && validWinnerIndex !== 2 && viewerBuy.choiceIndex === validWinnerIndex);
-    const previewStrikeTickets = scope === "viewer" || !isWinner ? 0n : strikeTicketsForClaim(claimFor(viewerBuy));
+    // Locked-odds previews need only the viewer's own shares, so they stay
+    // exact in viewer scope; legacy previews divide by ALL winner shares and
+    // are zeroed there instead of running garbage math over partial rows.
+    const previewStrikeTickets = !isWinner ? 0n
+      : lockedOdds ? strikeTicketsBase(viewerBuy?.amount ?? 0n)
+      : scope === "viewer" ? 0n
+      : strikeTicketsBase(claimFor(viewerBuy));
     const closed = settled || now >= (market.endAt ?? 0n);
     return [{
       ...fight,
@@ -220,6 +233,7 @@ export async function readToriiFightSnapshots(
       vaultDenominator,
       outcomeCounts,
       outcomeShares,
+      lockedOdds,
       ...(scope === "market" && fightBuyRead.complete ? {
         oddsSeries: deriveFightOddsSeries({
           buys,
