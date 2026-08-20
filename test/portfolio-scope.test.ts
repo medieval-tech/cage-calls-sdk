@@ -146,6 +146,7 @@ describe("accounts.portfolio viewer-scoped hydration", () => {
     expect(lost?.viewer).toMatchObject({ hasBought: true, choiceIndex: 0, isWinner: false });
 
     expect(response.meta.complete).toBe(true);
-    expect(rpc.calls).toEqual([]);
+    // The one-time cached locked_odds_cutover config read is the only RPC allowed.
+    expect(rpc.calls.filter((call) => call.entrypoint !== "locked_odds_cutover")).toEqual([]);
   });
 });

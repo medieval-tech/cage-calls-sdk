@@ -225,6 +225,12 @@ export interface FightFeedItem extends Fight {
   vaultDenominator: bigint;
   outcomeCounts: bigint[];
   outcomeShares: bigint[];
+  /**
+   * Fight pays locked odds (id at or above the on-chain cutover): redeem mints
+   * the buy-time shares directly, so quotes are guarantees. Absent on the RPC
+   * fallback path, which cannot see the cutover — treat as unknown.
+   */
+  lockedOdds?: boolean;
   payoutNumerators: bigint[];
   payoutDenominator: bigint;
   pot: FightPotState;

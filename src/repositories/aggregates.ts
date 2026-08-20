@@ -383,8 +383,9 @@ export function createAggregateRepositories(
               // Viewer-scoped hydration: a portfolio spans the account's whole
               // betting history, and full market snapshots for it grow with
               // GLOBAL buy volume (measured: 25 MiB for a 58-buy account).
-              // Won fights are still hydrated with full rows inside the viewer
-              // scope, so claim math stays exact — see readToriiFightSnapshots.
+              // Locked-odds claim previews stay exact in this scope (they only
+              // need the viewer's own shares); legacy-fight previews are zeroed
+              // here — see readToriiFightSnapshots.
               if (context.torii) {
                 try {
                   return await readToriiFightSnapshots(context, buys.map((buy) => buy.fightId), account, options, "viewer");

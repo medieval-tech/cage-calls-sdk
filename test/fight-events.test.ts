@@ -76,7 +76,8 @@ describe("fightEvents.get", () => {
     expect(response.meta.source).toBe("torii");
     expect(response.meta.complete).toBe(true);
     expect(response.meta.warnings).toEqual([]);
-    expect(rpc.calls).toEqual([]);
+    // The one-time cached locked_odds_cutover config read is the only RPC allowed.
+    expect(rpc.calls.filter((call) => call.entrypoint !== "locked_odds_cutover")).toEqual([]);
     // Index scan + matched-id hydration only; a cursor walk would add one
     // Fight query per feed page.
     expect(fightQueries).toBe(2);
@@ -93,7 +94,8 @@ describe("fightEvents.get", () => {
 
     expect(response.data).toBeUndefined();
     expect(response.meta.complete).toBe(true);
-    expect(rpc.calls).toEqual([]);
+    // The one-time cached locked_odds_cutover config read is the only RPC allowed.
+    expect(rpc.calls.filter((call) => call.entrypoint !== "locked_odds_cutover")).toEqual([]);
   });
 
   it("falls back to the cursor walk with a logged warning when the index scan fails", async () => {

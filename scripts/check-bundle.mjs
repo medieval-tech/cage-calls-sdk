@@ -12,6 +12,11 @@ const bytes = gzipSync(await readFile("dist/index.js")).byteLength;
 // Each extra network costs roughly this much. If a fifth is ever added, prefer
 // splitting presets out of the core entrypoint over raising this again — mainnet
 // users currently download the dev, staging and Katana addresses they never use.
-const limit = 62 * 1024;
+//
+// Raised 62 -> 63 KiB in 0.2.9 for the locked-odds payout feature: quoteFightBuy
+// (the exact bet-time quote both frontends now share), the cached on-chain
+// locked_odds_cutover resolver, and the locked/legacy claim branch in the fight
+// snapshots (~800 bytes gzip). Main sat 254 bytes under the old limit.
+const limit = 63 * 1024;
 if (bytes > limit) throw new Error(`Core bundle is ${bytes} bytes gzip; limit is ${limit}.`);
 console.log(`Core bundle: ${bytes} bytes gzip.`);

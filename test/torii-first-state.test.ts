@@ -97,7 +97,8 @@ describe("Torii-first account state", () => {
       },
     });
     expect(response.data.actions).toEqual([{ type: "redeem-payout", fightId: 84n }]);
-    expect(rpc.calls).toEqual([]);
+    // The one-time cached locked_odds_cutover config read is the only RPC allowed.
+    expect(rpc.calls.filter((call) => call.entrypoint !== "locked_odds_cutover")).toEqual([]);
     expect(rpc.requests).toEqual([]);
   });
 
@@ -129,6 +130,7 @@ describe("Torii-first account state", () => {
       balance: 4n,
       tokenType: "erc1155",
     }]);
-    expect(rpc.calls).toEqual([]);
+    // The one-time cached locked_odds_cutover config read is the only RPC allowed.
+    expect(rpc.calls.filter((call) => call.entrypoint !== "locked_odds_cutover")).toEqual([]);
   });
 });

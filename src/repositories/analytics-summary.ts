@@ -1,4 +1,5 @@
 import { normalizeAddress } from "../core/codecs.js";
+import { FIGHT_BUY_STAKE } from "../core/odds.js";
 import type { Address, AnalyticsSnapshot, Fight, FightBuy } from "../core/types.js";
 
 export interface AnalyticsSummaryFilter {
@@ -132,7 +133,9 @@ export function summarizeAnalyticsSnapshot(
     const wallet = normalizeAddress(buy.buyer);
     const eventName = fight.eventName.trim() || "Untitled event";
     allWallets.add(wallet);
-    volume += buy.amount;
+    // FightBuy.amount stores locked-odds shares, not the deposit — collateral
+    // volume is exactly the fixed stake per buy.
+    volume += FIGHT_BUY_STAKE;
 
     const eventUsers = eventWallets.get(eventName) ?? new Set<string>();
     eventUsers.add(wallet);
@@ -147,14 +150,14 @@ export function summarizeAnalyticsSnapshot(
     const fightEntry = fightStats.get(buy.fightId.toString()) ?? { fight, buys: 0, wallets: new Set<string>(), volume: 0n };
     fightEntry.buys += 1;
     fightEntry.wallets.add(wallet);
-    fightEntry.volume += buy.amount;
+    fightEntry.volume += FIGHT_BUY_STAKE;
     fightStats.set(buy.fightId.toString(), fightEntry);
 
     const day = new Date(Number(buy.boughtAt) * 1000).toISOString().slice(0, 10);
     const dayEntry = dailyStats.get(day) ?? { predictions: 0, wallets: new Set<string>(), volume: 0n };
     dayEntry.predictions += 1;
     dayEntry.wallets.add(wallet);
-    dayEntry.volume += buy.amount;
+    dayEntry.volume += FIGHT_BUY_STAKE;
     dailyStats.set(day, dayEntry);
 
     const winner = snapshot.winnerChoiceByFight[buy.fightId.toString()];

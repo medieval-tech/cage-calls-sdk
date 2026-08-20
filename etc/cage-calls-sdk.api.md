@@ -665,6 +665,9 @@ export type CircuitState = "closed" | "open" | "half-open";
 export function clampPageSize(value: number | undefined, maximum: number, fallback: number): number;
 
 // @public (undocumented)
+export function clearLockedOddsCutoverCache(): void;
+
+// @public (undocumented)
 export class ConfigurationError extends CageCallsSdkError {
     constructor(message: string, details?: Readonly<Record<string, unknown>>);
 }
@@ -824,7 +827,7 @@ export const CURATED_ENTRYPOINTS: Readonly<{
     readonly CALLS: readonly ["balance_of", "allowance", "approve", "transfer", "transfer_from", "mint", "burn", "has_role", "grant_role", "revoke_role"];
     readonly CageCallsOracle: readonly ["set_winner", "set_winner_index", "get_winner", "is_admin", "grant_admin", "revoke_admin"];
     readonly ConditionalTokens: readonly ["balance_of", "is_approved_for_all", "get_payout_numerator", "get_payout_denominator", "split_position", "merge_position", "redeem_positions"];
-    readonly FightFactory: readonly ["fight", "get_fight_feed", "get_fight_feed_by_ids", "get_fight_buys", "get_fight_buy", "get_fight_winner", "get_account_fight_ids", "get_account_fight_feed", "next_fight_id", "has_bought", "has_redeemed", "user_choice", "preview_strike_tickets", "fight_winner_index", "winners_count", "fight_pot_total", "fight_pot_claimed", "create_fight", "buy_fight", "close_fight", "settle_fight", "redeem", "set_collateral_token", "is_admin", "grant_admin", "revoke_admin"];
+    readonly FightFactory: readonly ["fight", "get_fight_feed", "get_fight_feed_by_ids", "get_fight_buys", "get_fight_buy", "get_fight_winner", "get_account_fight_ids", "get_account_fight_feed", "next_fight_id", "has_bought", "has_redeemed", "user_choice", "preview_strike_tickets", "preview_strike_earnings", "fight_winner_index", "winners_count", "fight_pot_total", "fight_pot_claimed", "locked_odds_cutover", "fight_vrf_address", "create_fight", "buy_fight", "close_fight", "settle_fight", "redeem", "redeem_with_roll", "set_collateral_token", "set_locked_odds_cutover", "set_fight_vrf_address", "is_admin", "grant_admin", "revoke_admin"];
     readonly FighterRegistry: readonly ["get_fighter", "get_fighters", "fighter_exists", "fighter_is_active", "register_fighter", "update_fighter", "activate_fighter", "deactivate_fighter", "is_admin", "grant_admin", "revoke_admin"];
     readonly Gacha: readonly ["pool_open", "pool_size", "get_pool_state", "get_pool_states", "get_user_states", "get_available_token_ids", "pool_registered_count", "pool_available_count", "expected_count", "escrowed_token", "get_strike_nonce", "vrf_address", "strike", "keep", "set_pool_open", "register_relic", "unregister_relic", "reset_pool", "set_vrf_address", "is_admin", "grant_admin", "revoke_admin"];
     readonly Markets: readonly ["get_market", "get_market_position", "get_vault_numerator", "get_vault_denominator", "buy", "close_market", "resolve", "redeem", "register_token", "register_oracle", "pause", "unpause", "is_paused", "has_role", "grant_role", "revoke_role"];
@@ -1102,6 +1105,15 @@ export interface FightBuy {
 }
 
 // @public (undocumented)
+export interface FightBuyQuote {
+    baseTickets: bigint;
+    bonusProbability: number;
+    claimable: bigint;
+    guaranteed: boolean;
+    shares: bigint;
+}
+
+// @public (undocumented)
 export interface Fighter {
     // (undocumented)
     active: boolean;
@@ -1192,6 +1204,7 @@ export interface FightFeedItem extends Fight {
     conditionId: bigint;
     // (undocumented)
     endAt: bigint;
+    lockedOdds?: boolean;
     // (undocumented)
     marketCreatedAt: bigint;
     oddsSeries?: FightOddsPoint[];
@@ -1481,6 +1494,9 @@ export interface IndexedTokenBalance {
 // @public (undocumented)
 export function ipfsPath(uri: string): string | undefined;
 
+// @public
+export function isLockedOddsFight(cutover: bigint, fightId: bigint): boolean;
+
 // @public (undocumented)
 export const KATANA_PRESET: {
     name: string;
@@ -1553,6 +1569,9 @@ export interface LiveRepository {
     // (undocumented)
     subscribe(filter: LiveFilter, observer: CageCallsLiveObserver): Promise<CageCallsLiveSubscription>;
 }
+
+// @public
+export function lockedRollBonusProbability(shares: bigint): number;
 
 // @public (undocumented)
 export const MAINNET_PRESET: {
@@ -2000,6 +2019,19 @@ export interface PublicEventSnapshot {
     ref: EventRef;
 }
 
+// @public
+export function quoteFightBuy(input: QuoteFightBuyInput): FightBuyQuote;
+
+// @public (undocumented)
+export interface QuoteFightBuyInput {
+    lockedOdds: boolean;
+    outcomeIndex: number;
+    outcomeShares?: readonly bigint[];
+    stake?: bigint;
+    vaultDenominator: bigint;
+    vaultNumerators: readonly bigint[];
+}
+
 // @public (undocumented)
 export interface RawCageCallsEvent {
     // (undocumented)
@@ -2403,6 +2435,9 @@ export interface RequestOptions {
 // @public (undocumented)
 export function resolveBudget(value?: Partial<RequestBudget>): RequestBudget;
 
+// @public
+export function resolveLockedOddsCutover(context: RepositoryContext, options?: RequestOptions): Promise<bigint>;
+
 // @public (undocumented)
 export function resolveNetwork(value: NetworkName | CageCallsNetwork): Readonly<CageCallsNetwork>;
 
@@ -2643,6 +2678,9 @@ export interface SourceStatusRegistry {
     // (undocumented)
     subscribe(listener: (status: Readonly<SourceStatus>) => void): () => void;
 }
+
+// @public
+export function strikeTicketsBase(claimable: bigint): bigint;
 
 // @public (undocumented)
 export function summarizeAnalyticsSnapshot(snapshot: AnalyticsSnapshot, filter?: AnalyticsSummaryFilter): CageCallsAnalyticsSummary;

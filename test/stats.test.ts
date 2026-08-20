@@ -150,7 +150,7 @@ describe("relic collection statistics", () => {
 });
 
 describe("Cage Calls market summaries", () => {
-  it("keeps exact volume and derives wallet, outcome, day, fight, and event metrics", () => {
+  it("counts collateral volume as stake per prediction and derives wallet, outcome, day, fight, and event metrics", () => {
     const first = fight();
     const second = fight({ fightId: 2n, marketId: 20n, eventName: "Event B", createdAt: 200n });
     const snapshot: AnalyticsSnapshot = {
@@ -166,7 +166,9 @@ describe("Cage Calls market summaries", () => {
     const summary = summarizeAnalyticsSnapshot(snapshot, { productionOnly: true });
 
     expect(summary.metrics).toMatchObject({ predictions: 3, uniqueWallets: 2, repeatWallets: 1, correct: 1, wrong: 1, unresolved: 1 });
-    expect(summary.metrics.volume).toBe(6_000_000_000_000_000_001n);
+    // FightBuy.amount stores locked-odds shares; deposited collateral is the
+    // fixed stake per prediction.
+    expect(summary.metrics.volume).toBe(3_000_000_000_000_000_000n);
     expect(summary.daily).toHaveLength(2);
     expect(summary.fights).toHaveLength(2);
     expect(summary.events.map((event) => event.eventName)).toEqual(["Event A", "Event B"]);
@@ -183,7 +185,7 @@ describe("Cage Calls market summaries", () => {
     };
 
     const summary = summarizeAnalyticsSnapshot(snapshot, { from: 150n, eventNames: ["Event B"] });
-    expect(summary.metrics).toMatchObject({ predictions: 1, uniqueWallets: 1, volume: 20n });
+    expect(summary.metrics).toMatchObject({ predictions: 1, uniqueWallets: 1, volume: 1_000_000_000_000_000_000n });
     expect(summary.includedFights.map((value) => value.fightId)).toEqual([2n]);
   });
 });
