@@ -18,11 +18,21 @@ export function clearLockedOddsCutoverCache(): void {
   CUTOVER_CACHE.clear();
 }
 
+// A missing entrypoint is the one error that PROVES a legacy (pre-upgrade)
+// class; anything else — abort, timeout, transport failure — says nothing
+// about the chain and must not be cached, or one aborted read poisons every
+// snapshot into legacy math for the whole TTL.
+function isEntrypointMissing(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /entrypoint/i.test(message) && /(not found|does not exist|ENTRYPOINT_NOT_FOUND)/i.test(message);
+}
+
 /**
  * First fight id that pays locked odds on this network, straight from the
  * chain (`FightFactory.locked_odds_cutover`). Returns 0n while locked odds are
  * inactive — including on deployments whose class predates the view, which is
- * exactly the legacy behavior those deployments have.
+ * exactly the legacy behavior those deployments have. Transient read failures
+ * also return 0n but are never cached: the next read retries the chain.
  */
 export async function resolveLockedOddsCutover(
   context: RepositoryContext,
@@ -41,7 +51,13 @@ export async function resolveLockedOddsCutover(
     );
     value = decodeSingleU256(result.data, "lockedOddsCutover");
   } catch (error) {
-    context.logger?.warn?.("locked_odds_cutover read failed; assuming legacy math.", {
+    if (!isEntrypointMissing(error)) {
+      context.logger?.warn?.("locked_odds_cutover read failed transiently; using legacy math for this read only.", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return value;
+    }
+    context.logger?.debug?.("locked_odds_cutover entrypoint missing (pre-upgrade class); legacy math.", {
       error: error instanceof Error ? error.message : String(error),
     });
   }
