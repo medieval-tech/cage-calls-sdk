@@ -21,9 +21,12 @@ export function clearLockedOddsCutoverCache(): void {
 // A missing entrypoint is the one error that PROVES a legacy (pre-upgrade)
 // class; anything else — abort, timeout, transport failure — says nothing
 // about the chain and must not be cached, or one aborted read poisons every
-// snapshot into legacy math for the whole TTL.
+// snapshot into legacy math for the whole TTL. The transport wraps the raw
+// node error as "RPC request failed (RPC_21)." — 21 is the JSON-RPC code for
+// a missing entrypoint — so match both the wrapped code and the raw text.
 function isEntrypointMissing(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
+  if (/\bRPC_21\b/.test(message)) return true;
   return /entrypoint/i.test(message) && /(not found|does not exist|ENTRYPOINT_NOT_FOUND)/i.test(message);
 }
 

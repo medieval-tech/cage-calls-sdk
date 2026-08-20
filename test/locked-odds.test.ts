@@ -41,6 +41,15 @@ describe("resolveLockedOddsCutover", () => {
     expect(calls()).toBe(1);
   });
 
+  it("recognizes the transport-wrapped RPC_21 form as a missing entrypoint", async () => {
+    const { context, calls } = contextWith(async () => {
+      throw new Error("RPC request failed (RPC_21).");
+    });
+    expect(await resolveLockedOddsCutover(context)).toBe(0n);
+    expect(await resolveLockedOddsCutover(context)).toBe(0n);
+    expect(calls()).toBe(1);
+  });
+
   it("does NOT cache transient failures — the next read retries the chain", async () => {
     let failures = 1;
     const { context, calls } = contextWith(async () => {
