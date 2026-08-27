@@ -15,7 +15,7 @@
         "sha256": "c94b569c20435dd5fd0edeb35c80b15dc3db29ac09d5822baed20c3b53561a0e"
       },
       "katana": {
-        "commit": "b29c195fac90ba0d55f2b9642e1d7c789bb1674e",
+        "commit": "2d354a14d86648337dcdc70ae938737bb47a4b16",
         "sha256": ""
       }
     }
@@ -237,8 +237,8 @@
           "0x6435347fd999d80f72fde6e95ca6c8c832ef65bb46630a9fc76ed7fc98e974b"
         ],
         "FightFactory": [
-          "0x759ed72e74e2d3b271ec0315c1718bd8b16cd2b26acb106eb6c12825aed707a",
-          "0x73bc30b7067715a59d40bfccebc2485bf0445c7a70e3222ab6a4faf0d06e603"
+          "0x660b656c7ee884c31f07cc7b965158ac6f9ad379496653321bc046287cd7f56",
+          "0x590a0401e71375f34f747a00b3399f945b31b646764ec938d579ab6a84d65e1"
         ],
         "FighterRegistry": [
           "0x7ea3649609007a966daa769a48623685361d1c69373ae83c7c22dca573b40a4",

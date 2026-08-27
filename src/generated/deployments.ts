@@ -17,7 +17,7 @@ export const UPSTREAM_DEPLOYMENTS = {
       "sha256": "c94b569c20435dd5fd0edeb35c80b15dc3db29ac09d5822baed20c3b53561a0e"
     },
     "katana": {
-      "commit": "b29c195fac90ba0d55f2b9642e1d7c789bb1674e",
+      "commit": "2d354a14d86648337dcdc70ae938737bb47a4b16",
       "sha256": ""
     }
   }
@@ -179,13 +179,13 @@ const presets = {
     "preset": "katana",
     "chainId": "0x57505f4341474543414c4c53",
     "namespace": "pm",
-    "deploymentRevision": "b29c195fac90ba0d55f2b9642e1d7c789bb1674e",
+    "deploymentRevision": "2d354a14d86648337dcdc70ae938737bb47a4b16",
     "worldAddress": "0x426c2e7fa41481653b60cc1c5c7ffef5667d01065b506bbaa6bf95b897b6645",
     "contracts": {
       "CALLS": "0x797f90b9fd6cb3dc57e44997794a232d740c3c2344901042dbfb2d1b3d5b49b",
       "CageCallsOracle": "0x5f5b55a617b49a7a2f5882dd73be9841e840dd18366d4430c5d93463029817",
       "ConditionalTokens": "0x75456df21ca735ded1c237dcfdc7835c0225caf6b9919a5c53f73d245d8b7ed",
-      "FightFactory": "0x759ed72e74e2d3b271ec0315c1718bd8b16cd2b26acb106eb6c12825aed707a",
+      "FightFactory": "0x660b656c7ee884c31f07cc7b965158ac6f9ad379496653321bc046287cd7f56",
       "FighterRegistry": "0x7ea3649609007a966daa769a48623685361d1c69373ae83c7c22dca573b40a4",
       "Gacha": "0x6c738e98a6e5073fcf60dde1264205703f0c61b294cd601d08b587e7d2b135b",
       "Markets": "0x7869310909a1312e51b56aa2a9466c342b9592942490d9850ef6dcc9ebd554b",
@@ -198,7 +198,7 @@ const presets = {
       "CALLS": "0x2abccf32b3166d327a22253eb724a366d4417f837db61169e1abe63db09d300",
       "CageCallsOracle": "0x16ca3bd248cc4eb5cd9869c876871091831da293b2e760bf73739e426b39b23",
       "ConditionalTokens": "0x6435347fd999d80f72fde6e95ca6c8c832ef65bb46630a9fc76ed7fc98e974b",
-      "FightFactory": "0x73bc30b7067715a59d40bfccebc2485bf0445c7a70e3222ab6a4faf0d06e603",
+      "FightFactory": "0x590a0401e71375f34f747a00b3399f945b31b646764ec938d579ab6a84d65e1",
       "FighterRegistry": "0x366b6ae2c4709582b47b8d7d21c7ec66eeae252fd03fad3b9e4598be6c60694",
       "Gacha": "0x74b81062f5cfaa8c1694ef9bcf1e5084864216de92e88bf05261489bf25cdba",
       "Markets": "0x7d0f98429baab86763239043963dcd0ae65d513e8375215022e162a2dae5d12",
