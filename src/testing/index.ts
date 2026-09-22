@@ -74,9 +74,16 @@ export function createMockToriiTransport(input: {
   events?: ToriiConnection<ToriiRawEvent> | Error;
   tokenBalances?: ToriiTokenBalanceConnection | Error | ((request: { offset?: number; limit?: number }) => ToriiTokenBalanceConnection);
   tokens?: ToriiTokenConnection | Error | ((request: { offset?: number; limit?: number }) => ToriiTokenConnection);
+  sql?: Record<string, unknown>[] | Error | ((statement: string) => Record<string, unknown>[]);
 } = {}): ToriiTransport {
   return {
     async query<T>() { throw new Error("Raw mock Torii query is not configured."); },
+    async sql<T>(statement: string) {
+      if (input.sql instanceof Error) throw input.sql;
+      if (input.sql === undefined) throw new Error("Mock Torii SQL is not configured.");
+      const rows = typeof input.sql === "function" ? input.sql(statement) : input.sql;
+      return ok(rows as T[], "torii", "sql");
+    },
     async model<T>(request: ToriiModelRequest) {
       const value = input.models?.[request.model];
       if (value instanceof Error) throw value;

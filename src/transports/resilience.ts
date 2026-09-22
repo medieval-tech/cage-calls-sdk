@@ -261,6 +261,9 @@ export function createResilientToriiTransport(
     model<T>(request: ToriiModelRequest, requestOptions?: RequestOptions) {
       return run(`model:${stable(request)}`, requestOptions, (signal) => transport.model<T>(request, { ...requestOptionsWithoutSignal(requestOptions), signal }));
     },
+    sql<T>(statement: string, requestOptions?: RequestOptions) {
+      return run(`sql:${statement}`, requestOptions, (signal) => transport.sql<T>(statement, { ...requestOptionsWithoutSignal(requestOptions), signal }));
+    },
     events(request = {}, requestOptions) {
       return run(`events:${stable(request)}`, requestOptions, (signal) => transport.events(request, { ...requestOptionsWithoutSignal(requestOptions), signal }));
     },

@@ -53,6 +53,48 @@ function attempts(reads: readonly ToriiModelRead<unknown>[]): SourceAttempt[] {
   return reads.flatMap((read) => read.attempts);
 }
 
+function payoutVector(market: Market, payoutRows: readonly IndexedValue[]): bigint[] {
+  return Array.from({ length: market.outcomeSlotCount }, (_, index) => payoutRows.find((row) => row.index === index)?.value ?? 0n);
+}
+
+/** The outcome index the market paid out on, once its payout vector is set. */
+function settledWinnerIndex(market: Market, payouts: readonly bigint[], payoutDenominator: bigint): number | undefined {
+  const winnerIndex = payouts.findIndex((value) => value > 0n);
+  const settled = (market.resolvedAt ?? 0n) > 0n || payoutDenominator > 0n;
+  return settled && winnerIndex >= 0 ? winnerIndex : undefined;
+}
+
+export interface ToriiWinnerChoices {
+  /** Winning outcome index per market ID, for every settled market Torii has indexed. */
+  winnerByMarket: Map<string, number>;
+  attempts: SourceAttempt[];
+  complete: boolean;
+  warnings: DataWarning[];
+}
+
+/**
+ * Settled winners for every market from the Market and Payout rows. This is
+ * one small page per model, unlike FightWinner, which holds one row per
+ * winning bettor and grows with betting volume.
+ */
+export async function readToriiWinnerChoices(context: RepositoryContext, options: RequestOptions = {}): Promise<ToriiWinnerChoices> {
+  const [marketRead, payoutNumeratorRead, payoutDenominatorRead] = await Promise.all([
+    readAllToriiModels(context, { model: "Market", selection: MARKET_SELECTION }, mapToriiMarket, options),
+    readAllToriiModels(context, { model: "PayoutNumerator", selection: PAYOUT_NUMERATOR_SELECTION }, (node): IndexedValue => ({ id: scalarBigInt(node.condition_id, "condition_id"), index: scalarNumber(node.index, "index"), value: scalarBigInt(node.value, "value") }), options),
+    readAllToriiModels(context, { model: "PayoutDenominator", selection: PAYOUT_DENOMINATOR_SELECTION }, (node): IndexedValue => ({ id: scalarBigInt(node.condition_id, "condition_id"), value: scalarBigInt(node.value, "value") }), options),
+  ]);
+  const reads = [marketRead, payoutNumeratorRead, payoutDenominatorRead];
+  const payoutNumerators = valuesById(payoutNumeratorRead.items);
+  const payoutDenominators = valuesById(payoutDenominatorRead.items);
+  const winnerByMarket = new Map<string, number>();
+  for (const market of marketRead.items) {
+    const conditionKey = market.conditionId.toString();
+    const winnerIndex = settledWinnerIndex(market, payoutVector(market, payoutNumerators.get(conditionKey) ?? []), payoutDenominators.get(conditionKey)?.[0]?.value ?? 0n);
+    if (winnerIndex !== undefined) winnerByMarket.set(market.marketId.toString(), winnerIndex);
+  }
+  return { winnerByMarket, attempts: attempts(reads), complete: reads.every((read) => read.complete), warnings: warnings(reads) };
+}
+
 function warnings(reads: readonly ToriiModelRead<unknown>[]): DataWarning[] {
   return reads.flatMap((read) => read.warnings);
 }
@@ -178,13 +220,12 @@ export async function readToriiFightSnapshots(
     const vaultRows = vaultNumerators.get(marketKey) ?? [];
     const payoutRows = payoutNumerators.get(conditionKey) ?? [];
     const vaults = Array.from({ length: outcomeCount }, (_, index) => vaultRows.find((row) => row.index === index)?.value ?? 0n);
-    const payouts = Array.from({ length: outcomeCount }, (_, index) => payoutRows.find((row) => row.index === index)?.value ?? 0n);
+    const payouts = payoutVector(market, payoutRows);
     const payoutDenominator = payoutDenominators.get(conditionKey)?.[0]?.value ?? 0n;
     const buys = buysByFight.get(fightId.toString()) ?? [];
     const vaultDenominator = vaultDenominators.get(marketKey)?.[0]?.value ?? 0n;
-    const winnerIndex = payouts.findIndex((value) => value > 0n);
+    const validWinnerIndex = settledWinnerIndex(market, payouts, payoutDenominator);
     const settled = (market.resolvedAt ?? 0n) > 0n || payoutDenominator > 0n;
-    const validWinnerIndex = settled && winnerIndex >= 0 ? winnerIndex : undefined;
     const outcomeCounts = Array.from({ length: outcomeCount }, (_, index) => BigInt(buys.filter((buy) => buy.choiceIndex === index).length));
     const outcomeShares = Array.from({ length: outcomeCount }, (_, index) => buys.filter((buy) => buy.choiceIndex === index).reduce((sum, buy) => sum + buy.amount, 0n));
     const potTotal = (marketBuysByMarket.get(marketKey) ?? [])

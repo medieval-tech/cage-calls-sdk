@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createCageCallsClient, encodeByteArray, encodeU256, SEPOLIA_DEV_PRESET } from "../src/index.js";
+import { createCageCallsClient, encodeByteArray, encodeU256, FIGHT_BUYS_SQL, SEPOLIA_DEV_PRESET } from "../src/index.js";
 import { createMockRpcTransport, createMockToriiTransport } from "../src/testing/index.js";
 import { encodeFightFeed } from "./fixtures.js";
 
@@ -112,7 +112,7 @@ describe("Torii-first indexed reads", () => {
     expect(response.data.at(-1)?.account).toBe("0x65");
   });
 
-  it("builds an analytics snapshot without making RPC calls", async () => {
+  it("builds an analytics snapshot from Fight, Market, and payout rows plus one SQL read of FightBuy", async () => {
     const rpc = createMockRpcTransport();
     const torii = createMockToriiTransport({
       models: {
@@ -121,18 +121,38 @@ describe("Torii-first indexed reads", () => {
           totalCount: 1,
           pageInfo: { hasNextPage: false, endCursor: "fight" },
         },
-        FightBuy: {
-          edges: [{ cursor: "buy", node: {
-            fight_id: "84", buyer: "0xabc", market_id: "900", choice_index: "1", amount: "100", bought_at: "1700000010",
+        Market: {
+          edges: [{ cursor: "market", node: {
+            market_id: "900", creator: "0x1", created_at: "1700000000", question_id: "3", condition_id: "4",
+            oracle: "0x5", outcome_slot_count: "2", collateral_token: "0x6", start_at: "10", end_at: "20",
+            resolve_at: "30", resolved_at: "40",
           } }],
           totalCount: 1,
-          pageInfo: { hasNextPage: false, endCursor: "buy" },
+          pageInfo: { hasNextPage: false, endCursor: "market" },
         },
-        FightWinner: {
-          edges: [{ cursor: "winner", node: { fight_id: "84", winner: "0xabc", choice_index: "1", redeemed: false } }],
+        PayoutNumerator: {
+          edges: [
+            { cursor: "p0", node: { condition_id: "4", index: "0", value: "0" } },
+            { cursor: "p1", node: { condition_id: "4", index: "1", value: "1" } },
+          ],
+          totalCount: 2,
+          pageInfo: { hasNextPage: false, endCursor: "p1" },
+        },
+        PayoutDenominator: {
+          edges: [{ cursor: "d", node: { condition_id: "4", value: "1" } }],
           totalCount: 1,
-          pageInfo: { hasNextPage: false, endCursor: "winner" },
+          pageInfo: { hasNextPage: false, endCursor: "d" },
         },
+        FightBuy: new Error("FightBuy must not be paged from the browser."),
+        FightWinner: new Error("FightWinner must not be paged from the browser."),
+      },
+      sql: (statement) => {
+        expect(statement).toBe(FIGHT_BUYS_SQL);
+        // Torii's shape for the grouped query: trimmed hex, one row per buyer.
+        return [
+          { b: "abc", p: "54.1.6553f10a 55.0.6553f10b" },
+          { b: "def", p: "54.0.6553f10c" },
+        ];
       },
     });
     const client = createCageCallsClient({ network: "mainnet", transports: { rpc, torii } });
@@ -141,10 +161,35 @@ describe("Torii-first indexed reads", () => {
 
     expect(response.meta).toMatchObject({ source: "torii", complete: true });
     expect(response.data.fights[0]?.fightId).toBe(84n);
-    expect(response.data.buys[0]?.buyer).toBe("0xabc");
+    expect(response.data.buys).toEqual([
+      { fightId: 84n, buyer: "0xabc", choiceIndex: 1, boughtAt: 1700000010n },
+      { fightId: 85n, buyer: "0xabc", choiceIndex: 0, boughtAt: 1700000011n },
+      { fightId: 84n, buyer: "0xdef", choiceIndex: 0, boughtAt: 1700000012n },
+    ]);
     expect(response.data.winnerChoiceByFight).toEqual({ "84": 1 });
     expect(rpc.calls).toEqual([]);
     expect(rpc.requests).toEqual([]);
+  });
+
+  it("keeps fights and winners when the SQL buy read fails", async () => {
+    const torii = createMockToriiTransport({
+      models: {
+        Fight: {
+          edges: [{ cursor: "fight", node: fight }],
+          totalCount: 1,
+          pageInfo: { hasNextPage: false, endCursor: "fight" },
+        },
+      },
+      sql: new Error("SQL endpoint is disabled."),
+    });
+    const client = createCageCallsClient({ network: "mainnet", transports: { rpc: createMockRpcTransport(), torii } });
+
+    const response = await client.analytics.snapshot();
+
+    expect(response.meta).toMatchObject({ source: "torii", complete: false });
+    expect(response.data.fights).toHaveLength(1);
+    expect(response.data.buys).toEqual([]);
+    expect(response.meta.warnings.map((warning) => warning.code)).toEqual(["ANALYTICS_BUYS_UNAVAILABLE", "ANALYTICS_PARTIAL"]);
   });
 
   it("uses one aggregate fight read without expanding analytics through per-fight RPC calls", async () => {
@@ -183,41 +228,6 @@ describe("Torii-first indexed reads", () => {
     expect(response.meta).toMatchObject({ source: "starknet-rpc", complete: true });
     expect(response.data.map((item) => item.fightId)).toEqual([84n, 85n]);
     expect(rpc.calls.map((call) => call.entrypoint)).toEqual(["get_fight_feed"]);
-  });
-
-  it("retains a partial indexed fight buy group without RPC verification", async () => {
-    const rpc = createMockRpcTransport({ calls: { fight_buy_count: ["1"] } });
-    const torii = createMockToriiTransport({
-      models: {
-        Fight: {
-          edges: [{ cursor: "fight", node: fight }],
-          totalCount: 1,
-          pageInfo: { hasNextPage: false, endCursor: "fight" },
-        },
-        FightBuy: {
-          edges: [{ cursor: "buy", node: {
-            fight_id: "84", buyer: "0xabc", market_id: "900", choice_index: "1", amount: "100", bought_at: "1700000010",
-          } }],
-          totalCount: 2,
-          pageInfo: { hasNextPage: true, endCursor: "buy" },
-        },
-        FightWinner: {
-          edges: [{ cursor: "winner", node: { fight_id: "84", winner: "0xabc", choice_index: "1", redeemed: false } }],
-          totalCount: 1,
-          pageInfo: { hasNextPage: false, endCursor: "winner" },
-        },
-      },
-    });
-    const client = createCageCallsClient({ network: SEPOLIA_DEV_PRESET, transports: { rpc, torii } });
-
-    const response = await client.analytics.snapshot({ traversal: { maxToriiPages: 1 } });
-
-    expect(response.meta).toMatchObject({ source: "torii", complete: false });
-    expect(response.data.buys).toHaveLength(1);
-    expect(response.meta.warnings).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: "TORII_ANALYTICS_PARTIAL" }),
-    ]));
-    expect(rpc.calls).toEqual([]);
   });
 
   it("joins market, fight, and vault models without making RPC calls", async () => {

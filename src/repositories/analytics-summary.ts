@@ -1,6 +1,6 @@
 import { normalizeAddress } from "../core/codecs.js";
 import { FIGHT_BUY_STAKE } from "../core/odds.js";
-import type { Address, AnalyticsSnapshot, Fight, FightBuy } from "../core/types.js";
+import type { Address, AnalyticsBuy, AnalyticsSnapshot, Fight } from "../core/types.js";
 
 export interface AnalyticsSummaryFilter {
   from?: bigint;
@@ -62,7 +62,7 @@ export interface CageCallsAnalyticsSummary {
   fights: AnalyticsFightSummary[];
   events: AnalyticsEventSummary[];
   includedFights: Fight[];
-  includedBuys: FightBuy[];
+  includedBuys: AnalyticsBuy[];
 }
 
 function uniqueBigInts(values: readonly bigint[] | undefined): bigint[] | undefined {
@@ -99,7 +99,7 @@ function includedFight(fight: Fight, filter: AnalyticsSummaryFilter): boolean {
   return true;
 }
 
-function includedBuy(buy: FightBuy, filter: AnalyticsSummaryFilter, fightIds: ReadonlySet<string>): boolean {
+function includedBuy(buy: AnalyticsBuy, filter: AnalyticsSummaryFilter, fightIds: ReadonlySet<string>): boolean {
   if (!fightIds.has(buy.fightId.toString())) return false;
   if (filter.from !== undefined && buy.boughtAt < filter.from) return false;
   if (filter.to !== undefined && buy.boughtAt > filter.to) return false;
