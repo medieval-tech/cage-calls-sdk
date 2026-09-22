@@ -501,3 +501,31 @@ describe("RPC transports", () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 });
+
+describe("Torii SQL transport", () => {
+  it("reads every row of a statement through /sql in one request", async () => {
+    const fetch = vi.fn(async () => json([{ fight_id: "0x54", buyer: "0xabc", choice_index: 1, bought_at: 1700000010 }]));
+    const torii = createToriiGraphqlTransport({ url: "https://torii.example/graphql", fetch });
+
+    const response = await torii.sql('SELECT fight_id FROM "pm-FightBuy"');
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://torii.example/sql?query=SELECT%20fight_id%20FROM%20%22pm-FightBuy%22',
+      expect.objectContaining({ headers: { accept: "application/json" } }),
+    );
+    expect(response.data).toHaveLength(1);
+    expect(response.attempts).toEqual([expect.objectContaining({ source: "torii", operation: "sql", ok: true })]);
+  });
+
+  it("surfaces a disabled SQL endpoint as a Torii transport error with attempts", async () => {
+    const logger = { warn: vi.fn() };
+    const torii = createToriiGraphqlTransport({ url: "https://torii.example", fetch: vi.fn(async () => new Response("SQL endpoint is disabled.", { status: 403 })), logger });
+
+    const error = await torii.sql("SELECT 1").catch((value: unknown) => value);
+
+    expect(error).toBeInstanceOf(TransportError);
+    expect((error as TransportError).status).toBe(403);
+    expect((error as { attempts?: unknown }).attempts).toEqual([expect.objectContaining({ source: "torii", operation: "sql", ok: false, status: 403 })]);
+    expect(logger.warn).toHaveBeenCalledOnce();
+  });
+});

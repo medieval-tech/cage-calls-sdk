@@ -264,9 +264,12 @@ export interface Market {
   resolvedAt?: bigint;
 }
 
+/** The FightBuy fields analytics aggregate over, read in one Torii SQL query. */
+export type AnalyticsBuy = Pick<FightBuy, "fightId" | "buyer" | "choiceIndex" | "boughtAt">;
+
 export interface AnalyticsSnapshot {
   fights: Fight[];
-  buys: FightBuy[];
+  buys: AnalyticsBuy[];
   winnerChoiceByFight: Record<string, number>;
 }
 

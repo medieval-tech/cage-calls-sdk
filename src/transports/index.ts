@@ -42,6 +42,11 @@ export interface ToriiConnection<T> {
 export interface ToriiTransport {
   query<T>(document: string, variables?: Record<string, unknown>, options?: RequestOptions): Promise<TransportResult<T>>;
   model<T>(request: ToriiModelRequest, options?: RequestOptions): Promise<TransportResult<ToriiConnection<T>>>;
+  /**
+   * Runs one read-only SQL statement against Torii's `/sql` endpoint and returns every row.
+   * Whole-model reads that would take dozens of GraphQL pages come back in one response.
+   */
+  sql<T = Record<string, unknown>>(statement: string, options?: RequestOptions): Promise<TransportResult<T[]>>;
   events(request?: { first?: number; after?: string; keys?: string[] }, options?: RequestOptions): Promise<TransportResult<ToriiConnection<ToriiRawEvent>>>;
   tokenBalances(account: Address, request?: { offset?: number; limit?: number }, options?: RequestOptions): Promise<TransportResult<ToriiTokenBalanceConnection>>;
   tokens(contract: Address, request?: { offset?: number; limit?: number }, options?: RequestOptions): Promise<TransportResult<ToriiTokenConnection>>;
@@ -97,6 +102,7 @@ export interface MetadataTransport {
   resolve(uri: string): string;
   getJson<T = unknown>(uri: string, options?: RequestOptions): Promise<TransportResult<T>>;
 }
+
 
 interface HttpOptions {
   fetch?: typeof fetch;
@@ -664,11 +670,13 @@ export function createFallbackRpcTransport(options: {
 const MODEL_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
 const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-export function createToriiGraphqlTransport(options: { url: string } & HttpOptions): ToriiTransport {
-  const base = validateHttpUrl(options.url, "Torii URL").replace(/\/$/, "");
-  const endpoint = base.endsWith("/graphql") ? base : `${base}/graphql`;
+export function createToriiGraphqlTransport(options: { url: string; sqlTimeoutMs?: number } & HttpOptions): ToriiTransport {
+  const base = validateHttpUrl(options.url, "Torii URL").replace(/\/$/, "").replace(/\/graphql$/, "");
+  const endpoint = `${base}/graphql`;
   const fetchImpl = resolveFetch(options.fetch);
   const timeoutMs = options.timeoutMs ?? 12_000;
+  // A SQL read returns a whole model in one response (megabytes), unlike one GraphQL page.
+  const sqlTimeoutMs = options.sqlTimeoutMs ?? 60_000;
   let modelPaginationDialect: "relay" | "offset" | undefined;
   let eventPaginationDialect: "relay" | "offset" | undefined;
   const tokenCountCache = new Map<string, { totalCount: number; expiresAt: number }>();
@@ -711,8 +719,38 @@ export function createToriiGraphqlTransport(options: { url: string } & HttpOptio
     }
   };
 
+  const sql = async <T>(statement: string, requestOptions: RequestOptions = {}): Promise<TransportResult<T[]>> => {
+    const startedAt = Date.now();
+    const timeout = withTimeout(requestOptions.signal, Math.min(requestOptions.timeoutMs ?? sqlTimeoutMs, sqlTimeoutMs));
+    try {
+      const response = await fetchImpl(`${base}/sql?query=${encodeURIComponent(statement)}`, {
+        headers: { accept: "application/json", ...options.headers },
+        signal: timeout.signal,
+      });
+      if (!response.ok) throw new TransportError("torii", `Torii SQL request failed with HTTP ${response.status}.`, { status: response.status });
+      const rows = await response.json() as T[];
+      if (!Array.isArray(rows)) throw new TransportError("torii", "Torii SQL response was not a row array.");
+      return { data: rows, attempts: [attempt("torii", "sql", startedAt, true)] };
+    } catch (cause) {
+      const transportError = cause instanceof TransportError
+        ? cause
+        : new TransportError("torii", `Torii SQL request failed (${errorCode(cause)}).`, { cause });
+      options.logger?.warn?.("Cage Calls Torii SQL request failed.", { errorCode: errorCode(transportError) });
+      Object.defineProperty(transportError, "attempts", {
+        value: [attempt("torii", "sql", startedAt, false, {
+          ...(transportError.status === undefined ? {} : { status: transportError.status }),
+          errorCode: errorCode(transportError),
+        })],
+      });
+      throw transportError;
+    } finally {
+      timeout.cleanup();
+    }
+  };
+
   return {
     query,
+    sql,
     async model<T>(request: ToriiModelRequest, requestOptions?: RequestOptions) {
       const startedAt = Date.now();
       if (!MODEL_NAME.test(request.model) || request.selection.some((field: string) => !FIELD_NAME.test(field))) {

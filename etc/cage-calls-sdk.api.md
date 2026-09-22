@@ -186,6 +186,9 @@ export class AllSourcesFailedError extends CageCallsSdkError {
     readonly attempts: SourceAttempt[];
 }
 
+// @public
+export type AnalyticsBuy = Pick<FightBuy, "fightId" | "buyer" | "choiceIndex" | "boughtAt">;
+
 // @public (undocumented)
 export interface AnalyticsDailyPoint {
     // (undocumented)
@@ -275,7 +278,7 @@ export interface AnalyticsRepository {
 // @public (undocumented)
 export interface AnalyticsSnapshot {
     // (undocumented)
-    buys: FightBuy[];
+    buys: AnalyticsBuy[];
     // (undocumented)
     fights: Fight[];
     // (undocumented)
@@ -353,7 +356,7 @@ export interface CageCallsAnalyticsSummary {
     // (undocumented)
     filter: AnalyticsSummaryFilter;
     // (undocumented)
-    includedBuys: FightBuy[];
+    includedBuys: AnalyticsBuy[];
     // (undocumented)
     includedFights: Fight[];
     // (undocumented)
@@ -820,6 +823,7 @@ export function createTokensRepository(context: RepositoryContext): TokensReposi
 // @public (undocumented)
 export function createToriiGraphqlTransport(options: {
     url: string;
+    sqlTimeoutMs?: number;
 } & HttpOptions): ToriiTransport;
 
 // @public (undocumented)
@@ -1627,6 +1631,9 @@ export const MAINNET_PRESET: {
 
 // @public (undocumented)
 export function mapConcurrent<T, R>(values: readonly T[], concurrency: number, mapper: (value: T, index: number) => Promise<R>): Promise<R[]>;
+
+// @public (undocumented)
+export function mapSqlFightBuy(row: Record<string, unknown>): AnalyticsBuy;
 
 // @public (undocumented)
 export function mapToriiFight(value: Record<string, unknown>): Fight;
@@ -2815,6 +2822,7 @@ export interface ToriiTransport {
     model<T>(request: ToriiModelRequest, options?: RequestOptions): Promise<TransportResult<ToriiConnection<T>>>;
     // (undocumented)
     query<T>(document: string, variables?: Record<string, unknown>, options?: RequestOptions): Promise<TransportResult<T>>;
+    sql<T = Record<string, unknown>>(statement: string, options?: RequestOptions): Promise<TransportResult<T[]>>;
     // (undocumented)
     tokenBalances(account: Address, request?: {
         offset?: number;

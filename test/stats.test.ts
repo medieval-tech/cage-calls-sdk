@@ -156,9 +156,9 @@ describe("Cage Calls market summaries", () => {
     const snapshot: AnalyticsSnapshot = {
       fights: [first, second],
       buys: [
-        { fightId: 1n, marketId: 10n, buyer: "0xa", choiceIndex: 0, amount: 2_000_000_000_000_000_000n, boughtAt: 1_700_000_000n },
-        { fightId: 1n, marketId: 10n, buyer: "0xb", choiceIndex: 1, amount: 1_000_000_000_000_000_001n, boughtAt: 1_700_000_100n },
-        { fightId: 2n, marketId: 20n, buyer: "0xa", choiceIndex: 0, amount: 3_000_000_000_000_000_000n, boughtAt: 1_700_086_400n },
+        { fightId: 1n, buyer: "0xa", choiceIndex: 0, boughtAt: 1_700_000_000n },
+        { fightId: 1n, buyer: "0xb", choiceIndex: 1, boughtAt: 1_700_000_100n },
+        { fightId: 2n, buyer: "0xa", choiceIndex: 0, boughtAt: 1_700_086_400n },
       ],
       winnerChoiceByFight: { "1": 0 },
     };
@@ -178,8 +178,8 @@ describe("Cage Calls market summaries", () => {
     const snapshot: AnalyticsSnapshot = {
       fights: [fight(), fight({ fightId: 2n, marketId: 20n, eventName: "Event B" })],
       buys: [
-        { fightId: 1n, marketId: 10n, buyer: "0xa", choiceIndex: 0, amount: 10n, boughtAt: 100n },
-        { fightId: 2n, marketId: 20n, buyer: "0xb", choiceIndex: 0, amount: 20n, boughtAt: 200n },
+        { fightId: 1n, buyer: "0xa", choiceIndex: 0, boughtAt: 100n },
+        { fightId: 2n, buyer: "0xb", choiceIndex: 0, boughtAt: 200n },
       ],
       winnerChoiceByFight: {},
     };

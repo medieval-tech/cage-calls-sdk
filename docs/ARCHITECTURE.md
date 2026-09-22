@@ -25,6 +25,9 @@ package subpath APIs.
 ## Read flow
 
 Catalog and analytics repositories prefer Torii because indexed reads are fast and efficient.
+Whole-model reads that would take dozens of GraphQL pages (analytics buy history: one FightBuy row per
+bet, growing without bound) go through Torii's `/sql` endpoint in one request instead, and each
+fight's winner derives from the small Market and Payout models rather than FightWinner.
 When indexed data is unavailable, empty when authoritative state proves otherwise, or incomplete,
 repositories use capability-gated aggregate contract views over Starknet RPC. The configured RPC
 primary is tried before fallback endpoints; Cartridge is RPC failover, not another indexer.

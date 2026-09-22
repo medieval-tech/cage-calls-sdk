@@ -77,6 +77,7 @@ The client exposes `fighters`, `fights`, `fightEvents`, `events`, `accounts`, `m
 `relics`, `gacha`, `tokens`, `activity`, `analytics`, and `admin` repositories.
 
 - Indexed catalogs and analytics query Torii first.
+- Analytics buy history is one Torii SQL read of the whole FightBuy model, never GraphQL paging.
 - Authoritative or missing state falls back to the configured Starknet RPC.
 - RPC pools try the primary provider before Cartridge failover.
 - External IPFS JSON is fetched only by display-oriented relic reads and only when needed.
