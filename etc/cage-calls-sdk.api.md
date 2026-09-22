@@ -1062,6 +1062,9 @@ export interface Fight {
 // @public
 export const FIGHT_BUY_STAKE = 1000000000000000000n;
 
+// @public
+export const FIGHT_BUYS_SQL: string;
+
 // @public (undocumented)
 export interface FightActionEligibility {
     // (undocumented)
@@ -1633,7 +1636,7 @@ export const MAINNET_PRESET: {
 export function mapConcurrent<T, R>(values: readonly T[], concurrency: number, mapper: (value: T, index: number) => Promise<R>): Promise<R[]>;
 
 // @public (undocumented)
-export function mapSqlFightBuy(row: Record<string, unknown>): AnalyticsBuy;
+export function mapSqlFightBuys(row: Record<string, unknown>): AnalyticsBuy[];
 
 // @public (undocumented)
 export function mapToriiFight(value: Record<string, unknown>): Fight;

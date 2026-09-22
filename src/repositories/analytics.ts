@@ -25,10 +25,16 @@ const FIGHT_SELECTION = [
 ] as const;
 
 /**
- * One SQL read for the whole FightBuy model. GraphQL pagination of the same
- * rows takes dozens of pages, each a count + sort over the table.
+ * Every FightBuy in one SQL read, grouped by buyer. Torii stores felts as
+ * zero-padded hex and does not compress responses, so one JSON row per buy is
+ * ~210 bytes (6.1 MB for 29k buys on mainnet, 2026-09-22). Trimming the
+ * padding and writing each buyer once packs the same rows into ~0.56 MB:
+ * `b` is the buyer's hex without 0x, `p` is space-separated
+ * `fight.choice.boughtAt` entries (hex, no 0x).
  */
-const FIGHT_BUYS_SQL = 'SELECT fight_id, buyer, choice_index, bought_at FROM "pm-FightBuy"';
+export const FIGHT_BUYS_SQL = "SELECT ltrim(substr(buyer, 3), '0') AS b, "
+  + "group_concat(ltrim(substr(fight_id, 3), '0') || '.' || choice_index || '.' || ltrim(substr(bought_at, 3), '0'), ' ') AS p "
+  + 'FROM "pm-FightBuy" GROUP BY buyer';
 
 export interface AnalyticsRepository {
   snapshot(options?: RequestOptions): Promise<DataResult<AnalyticsSnapshot>>;
@@ -55,13 +61,22 @@ function failed(error: unknown, code: string, message: string, source: DataSourc
   return { attempts: transportAttemptsFromError(error), complete: false, warnings: [{ code, message, source }] };
 }
 
-export function mapSqlFightBuy(row: Record<string, unknown>): AnalyticsBuy {
-  return {
-    fightId: scalarBigInt(row.fight_id, "fight_id"),
-    buyer: normalizeAddress(String(row.buyer)),
-    choiceIndex: scalarNumber(row.choice_index, "choice_index"),
-    boughtAt: scalarBigInt(row.bought_at, "bought_at"),
-  };
+/** `ltrim` leaves an empty string for zero; restore the 0x prefix either way. */
+function trimmedHex(value: string | undefined, label: string): bigint {
+  return scalarBigInt(`0x${value || "0"}`, label);
+}
+
+export function mapSqlFightBuys(row: Record<string, unknown>): AnalyticsBuy[] {
+  const buyer = normalizeAddress(`0x${String(row.b ?? "") || "0"}`);
+  return String(row.p ?? "").split(" ").filter(Boolean).map((entry) => {
+    const [fightId, choiceIndex, boughtAt] = entry.split(".");
+    return {
+      fightId: trimmedHex(fightId, "fight_id"),
+      buyer,
+      choiceIndex: scalarNumber(choiceIndex, "choice_index"),
+      boughtAt: trimmedHex(boughtAt, "bought_at"),
+    };
+  });
 }
 
 async function readFights(context: RepositoryContext, options: RequestOptions): Promise<FightsRead> {
@@ -101,7 +116,7 @@ async function readBuys(context: RepositoryContext, options: RequestOptions): Pr
   }
   try {
     const response = await context.torii.sql(FIGHT_BUYS_SQL, options);
-    return { buys: response.data.map(mapSqlFightBuy), attempts: response.attempts, complete: true, warnings: [] };
+    return { buys: response.data.flatMap(mapSqlFightBuys), attempts: response.attempts, complete: true, warnings: [] };
   } catch (error) {
     return { buys: [], ...failed(error, "ANALYTICS_BUYS_UNAVAILABLE", "The Torii SQL buy history read failed; other analytics data was retained.", "torii") };
   }

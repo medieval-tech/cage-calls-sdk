@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createCageCallsClient, encodeByteArray, encodeU256, SEPOLIA_DEV_PRESET } from "../src/index.js";
+import { createCageCallsClient, encodeByteArray, encodeU256, FIGHT_BUYS_SQL, SEPOLIA_DEV_PRESET } from "../src/index.js";
 import { createMockRpcTransport, createMockToriiTransport } from "../src/testing/index.js";
 import { encodeFightFeed } from "./fixtures.js";
 
@@ -147,8 +147,12 @@ describe("Torii-first indexed reads", () => {
         FightWinner: new Error("FightWinner must not be paged from the browser."),
       },
       sql: (statement) => {
-        expect(statement).toBe('SELECT fight_id, buyer, choice_index, bought_at FROM "pm-FightBuy"');
-        return [{ fight_id: "0x0000000000000000000000000000000000000000000000000000000000000054", buyer: "0x0abc", choice_index: 1, bought_at: 1700000010 }];
+        expect(statement).toBe(FIGHT_BUYS_SQL);
+        // Torii's shape for the grouped query: trimmed hex, one row per buyer.
+        return [
+          { b: "abc", p: "54.1.6553f10a 55.0.6553f10b" },
+          { b: "def", p: "54.0.6553f10c" },
+        ];
       },
     });
     const client = createCageCallsClient({ network: "mainnet", transports: { rpc, torii } });
@@ -157,7 +161,11 @@ describe("Torii-first indexed reads", () => {
 
     expect(response.meta).toMatchObject({ source: "torii", complete: true });
     expect(response.data.fights[0]?.fightId).toBe(84n);
-    expect(response.data.buys).toEqual([{ fightId: 84n, buyer: "0xabc", choiceIndex: 1, boughtAt: 1700000010n }]);
+    expect(response.data.buys).toEqual([
+      { fightId: 84n, buyer: "0xabc", choiceIndex: 1, boughtAt: 1700000010n },
+      { fightId: 85n, buyer: "0xabc", choiceIndex: 0, boughtAt: 1700000011n },
+      { fightId: 84n, buyer: "0xdef", choiceIndex: 0, boughtAt: 1700000012n },
+    ]);
     expect(response.data.winnerChoiceByFight).toEqual({ "84": 1 });
     expect(rpc.calls).toEqual([]);
     expect(rpc.requests).toEqual([]);
