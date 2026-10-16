@@ -1,4 +1,4 @@
-import { createDataResult, resolveRequestBudget } from "../core/request.js";
+import { createDataResult } from "../core/request.js";
 import { normalizeAddress, normalizeFelt, selectorFromName } from "../core/codecs.js";
 import { AllSourcesFailedError, UnsupportedCapabilityError } from "../core/errors.js";
 import type { RepositoryContext } from "./index.js";
@@ -9,8 +9,6 @@ import type {
   Page,
   RawCageCallsEvent,
   RequestOptions,
-  DataWarning,
-  SourceAttempt,
 } from "../core/types.js";
 
 const EVENT_TYPES = new Map<string, { name: string; type: CageCallsActivity["type"]; action?: "preparation" | "resolution" | "split" | "merge" | "redemption" }>([
@@ -89,7 +87,6 @@ export function decodeActivity(network: string, event: RawCageCallsEvent): CageC
 }
 
 export interface ActivityRepository {
-  all(input?: { keys?: string[] }, options?: RequestOptions): Promise<DataResult<CageCallsActivity[]>>;
   page(input?: { limit?: number; cursor?: string; keys?: string[] }, options?: RequestOptions): Promise<DataResult<Page<CageCallsActivity>>>;
   /** @deprecated Use page(). */
   list(input?: { limit?: number; cursor?: string; keys?: string[] }, options?: RequestOptions): Promise<DataResult<Page<CageCallsActivity>>>;
@@ -180,40 +177,6 @@ export function createActivityRepository(context: RepositoryContext): ActivityRe
 
   return {
     raw,
-    async all(input = {}, options = {}) {
-      const startedAt = context.now();
-      const budget = resolveRequestBudget(context.budget, options);
-      const items: CageCallsActivity[] = [];
-      const attempts: SourceAttempt[] = [];
-      const warnings: DataWarning[] = [];
-      let cursor: string | undefined;
-      let exhausted = false;
-      let complete = true;
-      for (let index = 0; index < budget.maxToriiPages && items.length < budget.maxToriiItems; index += 1) {
-        const response = await page({ ...input, limit: Math.min(context.budget.pageSize, budget.maxToriiItems - items.length), ...(cursor ? { cursor } : {}) }, options);
-        items.push(...response.data.items);
-        attempts.push(...response.meta.attempts);
-        warnings.push(...response.meta.warnings);
-        complete &&= response.meta.complete;
-        if (!response.data.hasMore) { exhausted = true; break; }
-        if (!response.data.cursor || response.data.cursor === cursor) {
-          warnings.push({ code: "TORII_CURSOR_STALLED", message: "Activity pagination stopped because Torii returned no usable next cursor.", source: "torii" });
-          break;
-        }
-        cursor = response.data.cursor;
-      }
-      if (!exhausted && items.length >= budget.maxToriiItems) warnings.push({ code: "TORII_ITEM_LIMIT", message: `Activity enumeration reached the ${budget.maxToriiItems} item budget.`, source: "torii" });
-      return createDataResult({
-        data: items,
-        source: "derived",
-        complete: complete && exhausted,
-        attempts,
-        warnings,
-        startedAt,
-        now: context.now,
-        ...(context.logger ? { logger: context.logger } : {}),
-      });
-    },
     page,
     list: page,
   };

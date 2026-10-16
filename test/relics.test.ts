@@ -6,7 +6,8 @@ import {
   createMockRpcTransport,
   createMockToriiTransport,
 } from "../src/testing/index.js";
-import { encodeOwnedPage, encodeRelicRows, toriiToken } from "./fixtures.js";
+import { encodeOwnedPage, encodeRelicRows, toriiToken, toriiTokenRow } from "./fixtures.js";
+import { createToriiWithSql } from "./torii-sqlite.js";
 
 const owner = "0x123" as const;
 
@@ -138,23 +139,31 @@ describe("relic ownership source policy", () => {
     expect(rpc.calls).toEqual([]);
   });
 
-  it("enumerates complete Torii collections beyond the former 1,000-row window without RPC", async () => {
+  it("reads a complete Torii collection in one SQL read without RPC", async () => {
     const totalRows = 1_205;
     const rpc = createMockRpcTransport({ calls: { next_token_id: [String(totalRows + 1), "0"] } });
-    const torii = createMockToriiTransport({
-      tokens: ({ offset = 0, limit = 100 }) => ({
-        totalCount: totalRows + 1,
-        edges: Array.from({ length: Math.min(limit, totalRows - offset) }, (_, index) => ({
-          node: { tokenMetadata: toriiToken(BigInt(offset + index + 1), SEPOLIA_DEV_PRESET.contracts.RelicNFT) },
-        })),
-      }),
+    const torii = createToriiWithSql({
+      tables: {
+        tokens: [
+          toriiTokenRow(undefined, SEPOLIA_DEV_PRESET.contracts.RelicNFT),
+          ...Array.from({ length: totalRows }, (_, index) => toriiTokenRow(BigInt(index + 1), SEPOLIA_DEV_PRESET.contracts.RelicNFT)),
+          toriiTokenRow(7n, "0x999"),
+        ],
+      },
     });
     const client = createCageCallsClient({ network: SEPOLIA_DEV_PRESET, transports: { rpc, torii } });
 
     const response = await client.relics.collection({ pageSize: 200, enrichFighters: false });
 
     expect(response.data.items).toHaveLength(totalRows);
-    expect(response.data.pageCount).toBe(7);
+    expect(response.data.items.at(-1)).toEqual({
+      tokenId: 1n,
+      name: "Relic #1",
+      image: "ipfs://image-1",
+      attributes: [{ traitType: "Power", value: 8 }],
+      metadataSources: ["torii"],
+    });
+    expect(response.data.pageCount).toBe(1);
     expect(response.meta.complete).toBe(true);
     expect(rpc.calls).toEqual([]);
   });
@@ -174,14 +183,13 @@ describe("relic ownership source policy", () => {
         },
       },
     });
-    const torii = createMockToriiTransport({
-      tokens: ({ offset = 0, limit = 100 }) => ({
-        totalCount: totalRows + 1,
-        edges: Array.from({ length: Math.min(limit, totalRows - offset) }, (_, index) => {
-          const tokenId = BigInt(offset + index + 1);
-          return { node: { tokenMetadata: toriiToken(tokenId, SEPOLIA_DEV_PRESET.contracts.RelicNFT, !missingIds.has(tokenId)) } };
+    const torii = createToriiWithSql({
+      tables: {
+        tokens: Array.from({ length: totalRows }, (_, index) => {
+          const tokenId = BigInt(index + 1);
+          return toriiTokenRow(tokenId, SEPOLIA_DEV_PRESET.contracts.RelicNFT, !missingIds.has(tokenId));
         }),
-      }),
+      },
     });
     const metadata = createMockMetadataTransport(Object.fromEntries(
       Array.from(missingIds, (tokenId) => [`ipfs://metadata-${tokenId}`, {
@@ -258,12 +266,7 @@ describe("relic ownership source policy", () => {
         get_relics: encodeRelicRows([{ tokenId: 2n, owner }]),
       },
     });
-    const torii = createMockToriiTransport({
-      tokens: {
-        totalCount: 2,
-        edges: [{ node: { tokenMetadata: toriiToken(1n, SEPOLIA_DEV_PRESET.contracts.RelicNFT) } }],
-      },
-    });
+    const torii = createToriiWithSql({ tables: { tokens: [toriiTokenRow(1n, SEPOLIA_DEV_PRESET.contracts.RelicNFT)] } });
     const metadata = createMockMetadataTransport({
       "ipfs://metadata-2": { name: "Two", image: "ipfs://two", attributes: [] },
     });

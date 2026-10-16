@@ -110,7 +110,8 @@ export function createCageCallsClient(options: CreateCageCallsClientOptions): Ca
     ...context,
     ...(metadata ? { metadata } : {}),
   });
-  const aggregates = createAggregateRepositories(context, { fights, gacha, relics, tokens });
+  const fightEvents = createFightEventsRepository(context, fights);
+  const aggregates = createAggregateRepositories(context, { fights, fightEvents, gacha, relics, tokens });
   const health: CageCallsHealth = {
     snapshot: () => sources.snapshot(),
     subscribe(listener) {
@@ -129,7 +130,7 @@ export function createCageCallsClient(options: CreateCageCallsClientOptions): Ca
     analytics: createAnalyticsRepository(context),
     fighters: createFightersRepository(context),
     fights,
-    fightEvents: createFightEventsRepository(context, fights),
+    fightEvents,
     events: aggregates.events,
     accounts: aggregates.accounts,
     markets: createMarketsRepository(context),

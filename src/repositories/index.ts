@@ -105,6 +105,8 @@ function compositeSource(attempts: readonly SourceAttempt[]): DataResult<unknown
   return "derived";
 }
 
+const newestFirst = (left: bigint, right: bigint) => left === right ? 0 : left > right ? -1 : 1;
+
 function toriiFallbackWarning(context: RepositoryContext, operation: string, error: unknown): DataWarning {
   const message = error instanceof Error ? error.message : String(error);
   context.logger?.warn?.("Torii read failed; falling back.", { operation, error: message });
@@ -478,6 +480,18 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
       const items: FightFeedItem[] = [];
       const attempts: SourceAttempt[] = [];
       const warnings: DataWarning[] = [];
+      if (context.torii) {
+        try {
+          const index = await readAllToriiModels(context, { model: "Fight", selection: ["fight_id"] }, (node) => scalarBigInt(node.fight_id, "fight_id"), options);
+          if (index.complete) {
+            const snapshots = await readToriiFightSnapshots(context, index.items.sort(newestFirst), normalizeAddress(input.viewer ?? "0x0"), options);
+            return result(context, startedAt, "torii", snapshots.data, [...index.attempts, ...snapshots.meta.attempts], snapshots.meta.complete, snapshots.meta.warnings);
+          }
+          warnings.push(...index.warnings);
+        } catch (error) {
+          warnings.push(toriiFallbackWarning(context, "fights.feedAll", error));
+        }
+      }
       const seen = new Set<string>();
       let cursor = 0n;
       let exhausted = false;
@@ -608,6 +622,18 @@ export function createFightsRepository(context: RepositoryContext): FightsReposi
       const items: FightFeedItem[] = [];
       const attempts: SourceAttempt[] = [];
       const warnings: DataWarning[] = [];
+      if (context.torii) {
+        try {
+          const portfolio = await createFightsRepository(context).portfolioAll(account, options);
+          if (portfolio.meta.complete) {
+            const snapshots = await readToriiFightSnapshots(context, portfolio.data.map((buy) => buy.fightId).sort(newestFirst), normalizeAddress(account), options);
+            return result(context, startedAt, "torii", snapshots.data, [...portfolio.meta.attempts, ...snapshots.meta.attempts], snapshots.meta.complete, snapshots.meta.warnings);
+          }
+          warnings.push(...portfolio.meta.warnings);
+        } catch (error) {
+          warnings.push(toriiFallbackWarning(context, "fights.accountFeedAll", error));
+        }
+      }
       let cursor = 0n;
       let exhausted = false;
       for (let pageIndex = 0; pageIndex < budget.maxRpcPages && items.length < budget.maxRpcItems; pageIndex += 1) {
