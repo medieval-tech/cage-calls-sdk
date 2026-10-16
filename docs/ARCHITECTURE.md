@@ -25,9 +25,13 @@ package subpath APIs.
 ## Read flow
 
 Catalog and analytics repositories prefer Torii because indexed reads are fast and efficient.
-Whole-model reads that would take dozens of GraphQL pages (analytics buy history: one FightBuy row per
-bet, growing without bound) go through Torii's `/sql` endpoint in one request instead, and each
-fight's winner derives from the small Market and Payout models rather than FightWinner.
+Reads that grow with betting volume or mints go through Torii's `/sql` endpoint instead of GraphQL
+paging: analytics buy history (one FightBuy row per bet), the relic inventory (one read for the whole
+collection), and fight snapshots, whose outcome counts and shares, pot, legacy claims and odds
+timeline are summed by SQLite (`src/transports/torii-sql.ts` does the exact u256 arithmetic SQLite
+lacks). A snapshot's cost grows with the number of fights, not bets; only the viewer's own buy and
+winner rows are read whole. Each fight's winner derives from the small Market and Payout models
+rather than FightWinner.
 When indexed data is unavailable, empty when authoritative state proves otherwise, or incomplete,
 repositories use capability-gated aggregate contract views over Starknet RPC. The configured RPC
 primary is tried before fallback endpoints; Cartridge is RPC failover, not another indexer.

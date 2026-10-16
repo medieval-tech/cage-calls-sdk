@@ -21,6 +21,12 @@ const bytes = gzipSync(await readFile("dist/index.js")).byteLength;
 // Raised 63 -> 64 KiB in 0.3.0: analytics buy history moved from GraphQL paging
 // to one Torii SQL read (new ToriiTransport.sql), and fight winners now come
 // from the Market/Payout rows instead of FightWinner. Main sat 254 bytes under.
-const limit = 64 * 1024;
+//
+// Raised 64 -> 65 KiB in 0.4.0 (+1,196 bytes gzip): fight snapshots sum buys, pots and
+// redemptions in Torii SQL instead of paging every buy row (fights.feedAll: 97 MB -> 2.1 MB),
+// feedAll/accountFeedAll hydrate in one pass, and the relic inventory is one SQL read
+// (35.6 MB -> 8.9 MB). Deleted in the same change: activity.all and the viewer-scoped
+// snapshot mode. Main sat 705 bytes under the old limit.
+const limit = 65 * 1024;
 if (bytes > limit) throw new Error(`Core bundle is ${bytes} bytes gzip; limit is ${limit}.`);
 console.log(`Core bundle: ${bytes} bytes gzip.`);

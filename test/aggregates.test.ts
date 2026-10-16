@@ -4,6 +4,7 @@ import {
   MAINNET_PRESET,
   createAggregateRepositories,
   type DataResult,
+  type FightEventsRepository,
   type FightFeedItem,
   type FightsRepository,
   type GachaRepository,
@@ -41,20 +42,19 @@ describe("public and account aggregates", () => {
   } satisfies RepositoryContext;
 
   it("keeps a public snapshot independent from account state", async () => {
-    const viewers: Array<string | undefined> = [];
-    const fights = {
-      feedAll: async (input?: { viewer?: string }) => {
-        viewers.push(input?.viewer);
-        return result([feedFight(1n, { hasBought: false, shares: 0n, boughtAt: 0n, hasRedeemed: false, isWinner: false, strikeTickets: 0n })]);
+    const requests: Array<{ eventName: string; input?: { seasonId?: bigint; viewer?: string } }> = [];
+    const fightEvents = {
+      get: async (eventName: string, input?: { seasonId?: bigint; viewer?: string }) => {
+        requests.push({ eventName, ...(input ? { input } : {}) });
+        const fight = feedFight(1n, { hasBought: false, shares: 0n, boughtAt: 0n, hasRedeemed: false, isWinner: false, strikeTickets: 0n });
+        return result({ seasonId: 7n, eventName, fights: [fight], lifecycle: "settled" as const });
       },
-    } as unknown as FightsRepository;
+    } as unknown as FightEventsRepository;
     const gacha = { pool: async (fightId: bigint) => result({ fightId, open: true, size: 1n, rarities: [] }) } as unknown as GachaRepository;
-    const relics = {} as RelicsRepository;
-    const tokens = {} as TokensRepository;
-    const repositories = createAggregateRepositories(context, { fights, gacha, relics, tokens });
+    const repositories = createAggregateRepositories(context, { fights: {} as FightsRepository, fightEvents, gacha, relics: {} as RelicsRepository, tokens: {} as TokensRepository });
     const snapshot = await repositories.events.get({ seasonId: 7n, eventName: "Cage Night" });
-    expect(snapshot.data.fights).toHaveLength(1);
-    expect(viewers).toEqual([undefined]);
+    expect(snapshot.data.fights.map((entry) => entry.fight.fightId)).toEqual([1n]);
+    expect(requests).toEqual([{ eventName: "Cage Night", input: { seasonId: 7n } }]);
   });
 
   it("returns every currently actionable portfolio operation", async () => {
@@ -75,7 +75,7 @@ describe("public and account aggregates", () => {
     const owned: OwnedRelicsPage = { items: [], hasMore: false, provenance: { owner: "0xabc", onchainBalance: 0n, ownershipSource: "starknet-rpc", verified: true } };
     const relics = { owned: async () => result(owned) } as unknown as RelicsRepository;
     const tokens = { callsBalance: async () => result(123n) } as unknown as TokensRepository;
-    const repositories = createAggregateRepositories(context, { fights, gacha, relics, tokens });
+    const repositories = createAggregateRepositories(context, { fights, fightEvents: {} as FightEventsRepository, gacha, relics, tokens });
     const portfolio = await repositories.accounts.portfolio("0xabc");
     expect(portfolio.data.callsBalance).toBe(123n);
     expect(portfolio.data.actions).toEqual([

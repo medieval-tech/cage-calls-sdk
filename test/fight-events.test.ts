@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MAINNET_PRESET } from "../src/index.js";
 import { createMockRpcTransport, createMockToriiTransport, createTestClient } from "../src/testing/index.js";
 import { encodeFightFeed } from "./fixtures.js";
+import { createToriiWithSql } from "./torii-sqlite.js";
 
 const connection = (nodes: Record<string, unknown>[]) => ({
   edges: nodes.map((node, index) => ({ cursor: `row-${index}`, node })),
@@ -54,7 +55,7 @@ describe("fightEvents.get", () => {
     ];
     let fightQueries = 0;
     const rpc = createMockRpcTransport();
-    const torii = createMockToriiTransport({
+    const torii = createToriiWithSql({
       models: {
         Fight: (request) => {
           fightQueries += 1;

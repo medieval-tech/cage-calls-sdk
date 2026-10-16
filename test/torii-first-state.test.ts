@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { MAINNET_PRESET, createCageCallsClient } from "../src/index.js";
 import { createMockRpcTransport, createMockToriiTransport } from "../src/testing/index.js";
+import { createToriiWithSql } from "./torii-sqlite.js";
 
 const connection = (nodes: Record<string, unknown>[]) => ({
   edges: nodes.map((node, index) => ({ cursor: `row-${index}`, node })),
@@ -48,7 +49,7 @@ describe("Torii-first account state", () => {
   it("composes positions and settled rewards from indexed models without RPC", async () => {
     const buyer = "0xabc";
     const rpc = createMockRpcTransport();
-    const torii = createMockToriiTransport({
+    const torii = createToriiWithSql({
       models: {
         Fight: connection([fight]),
         Market: connection([market]),

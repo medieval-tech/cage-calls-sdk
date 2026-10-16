@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { MAINNET_PRESET, createCageCallsClient } from "../src/index.js";
-import { createMockRpcTransport, createMockToriiTransport } from "../src/testing/index.js";
+import { createMockRpcTransport } from "../src/testing/index.js";
+import { createToriiWithSql } from "./torii-sqlite.js";
 
 const connection = (nodes: Record<string, unknown>[]) => ({
   edges: nodes.map((node, index) => ({ cursor: `row-${index}`, node })),
@@ -53,18 +54,26 @@ const buyRow = (fightId: string, buyer: string, marketId: string, choice: string
   bought_at: "1700000010",
 });
 
-describe("accounts.portfolio viewer-scoped hydration", () => {
-  it("pushes viewer/factory filters to torii and never fetches cross-account rows", async () => {
+describe("accounts.portfolio fight snapshots", () => {
+  it("sums cross-account aggregates in Torii SQL and reads only the viewer's rows whole", async () => {
     const buyer = "0xabc";
     const other = "0xdef";
     const ONE = "1000000000000000000";
     const THREE = "3000000000000000000";
     const fightBuyWheres: Array<Record<string, unknown>> = [];
     const fightWinnerWheres: Array<Record<string, unknown>> = [];
-    const marketBuyWheres: Array<Record<string, unknown>> = [];
+    const buys = [
+      buyRow("84", buyer, "900", "1", ONE),
+      buyRow("84", other, "900", "1", THREE),
+      buyRow("85", buyer, "901", "0", ONE),
+    ];
+    const winners = [
+      { fight_id: "84", winner: buyer, choice_index: "1", redeemed: false },
+      { fight_id: "84", winner: other, choice_index: "1", redeemed: true },
+    ];
 
     const rpc = createMockRpcTransport();
-    const torii = createMockToriiTransport({
+    const torii = createToriiWithSql({
       models: {
         // Bought 84 (won: choice 1) and 85 (lost: chose 0, winner 1).
         Fight: connection([fightRow("84", "900"), fightRow("85", "901")]),
@@ -82,33 +91,12 @@ describe("accounts.portfolio viewer-scoped hydration", () => {
         FightBuy: (request) => {
           const where = (request.where ?? {}) as Record<string, unknown>;
           fightBuyWheres.push(where);
-          // portfolioAll's buyer enumeration + the viewer-scoped snapshot read
-          if (where.buyerEQ) return connection([
-            buyRow("84", buyer, "900", "1", ONE),
-            buyRow("85", buyer, "901", "0", ONE),
-          ]);
-          // enrichment: full rows for the won fight only
-          return connection([
-            buyRow("84", buyer, "900", "1", ONE),
-            buyRow("84", other, "900", "1", THREE),
-          ]);
+          return connection(buys.filter((row) => row.buyer === where.buyerEQ));
         },
         FightWinner: (request) => {
           const where = (request.where ?? {}) as Record<string, unknown>;
           fightWinnerWheres.push(where);
-          if (where.winnerEQ) return connection([{ fight_id: "84", winner: buyer, choice_index: "1", redeemed: false }]);
-          return connection([
-            { fight_id: "84", winner: buyer, choice_index: "1", redeemed: false },
-            { fight_id: "84", winner: other, choice_index: "1", redeemed: true },
-          ]);
-        },
-        MarketBuy: (request) => {
-          const where = (request.where ?? {}) as Record<string, unknown>;
-          marketBuyWheres.push(where);
-          return connection([
-            { market_id: "900", outcome_index: "1", account_address: MAINNET_PRESET.contracts.FightFactory, amount_in: "4000000000000000000" },
-            { market_id: "901", outcome_index: "1", account_address: MAINNET_PRESET.contracts.FightFactory, amount_in: "2000000000000000000" },
-          ]);
+          return connection(winners.filter((row) => row.winner === where.winnerEQ));
         },
         PayoutNumerator: connection([
           { condition_id: "4", index: "0", value: "0" },
@@ -121,28 +109,34 @@ describe("accounts.portfolio viewer-scoped hydration", () => {
           { condition_id: "5", value: "1" },
         ]),
       },
+      tables: {
+        FightBuy: buys,
+        FightWinner: winners,
+        MarketBuy: [
+          { market_id: "900", outcome_index: "1", account_address: MAINNET_PRESET.contracts.FightFactory, amount_in: "4000000000000000000" },
+          { market_id: "901", outcome_index: "1", account_address: MAINNET_PRESET.contracts.FightFactory, amount_in: "2000000000000000000" },
+          // Not a FightFactory deposit: never part of the pot.
+          { market_id: "900", outcome_index: "0", account_address: other, amount_in: "7000000000000000000" },
+        ],
+      },
     });
     const client = createCageCallsClient({ network: "mainnet", transports: { rpc, torii } });
 
     const response = await client.accounts.portfolio(buyer);
 
-    // Every heavy read carried the scoping filters — no cross-account fetches,
-    // and MarketBuy (a ~full-table read on these markets) is never queried.
+    // Whole rows are only ever read for the viewer; every other account is a SQL sum.
     expect(fightBuyWheres.length).toBeGreaterThan(0);
-    expect(fightBuyWheres.every((where) => where.buyerEQ)).toBe(true);
-    expect(fightWinnerWheres.every((where) => where.winnerEQ)).toBe(true);
-    expect(marketBuyWheres).toEqual([]);
+    expect(fightBuyWheres.every((where) => where.buyerEQ === buyer)).toBe(true);
+    expect(fightWinnerWheres.every((where) => where.winnerEQ === buyer)).toBe(true);
 
     const won = response.data.fights.find((entry) => entry.fight.fightId === 84n)?.fight;
     const lost = response.data.fights.find((entry) => entry.fight.fightId === 85n)?.fight;
-    // Actionable state is exact: winnerIndex/settled (payouts) and the
-    // viewer's own win/redeem state. Cross-account aggregates (pot.total,
-    // claimed, winnersCount, preview tickets) are zeroed, never computed from
-    // partial rows.
-    expect(won?.pot).toMatchObject({ total: 0n, claimed: 0n, winnersCount: 0n, winnerIndex: 1, settled: true });
-    expect(won?.viewer).toMatchObject({ hasBought: true, isWinner: true, hasRedeemed: false, previewStrikeTickets: 0n });
-    expect(won?.oddsSeries).toBeUndefined();
-    expect(lost?.pot).toMatchObject({ total: 0n, settled: true });
+    // Legacy fight: claims renormalize the 4-token pot over 4 winner shares.
+    expect(won?.outcomeCounts).toEqual([0n, 2n]);
+    expect(won?.outcomeShares).toEqual([0n, 4_000_000_000_000_000_000n]);
+    expect(won?.pot).toMatchObject({ total: 4_000_000_000_000_000_000n, claimed: 3_000_000_000_000_000_000n, winnersCount: 2n, winnerIndex: 1, settled: true });
+    expect(won?.viewer).toMatchObject({ hasBought: true, isWinner: true, hasRedeemed: false, previewStrikeTickets: 1n });
+    expect(lost?.pot).toMatchObject({ total: 2_000_000_000_000_000_000n, winnersCount: 0n, settled: true });
     expect(lost?.viewer).toMatchObject({ hasBought: true, choiceIndex: 0, isWinner: false });
 
     expect(response.meta.complete).toBe(true);

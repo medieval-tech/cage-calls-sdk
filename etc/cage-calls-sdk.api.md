@@ -93,10 +93,6 @@ export interface ActionEligibility {
 
 // @public (undocumented)
 export interface ActivityRepository {
-    // (undocumented)
-    all(input?: {
-        keys?: string[];
-    }, options?: RequestOptions): Promise<DataResult<CageCallsActivity[]>>;
     // @deprecated (undocumented)
     list(input?: {
         limit?: number;
@@ -687,6 +683,7 @@ export function createAdminRepository(context: RepositoryContext): AdminReposito
 // @public (undocumented)
 export function createAggregateRepositories(context: RepositoryContext, dependencies: {
     fights: FightsRepository;
+    fightEvents: FightEventsRepository;
     gacha: GachaRepository;
     relics: RelicsRepository;
     tokens: TokensRepository;

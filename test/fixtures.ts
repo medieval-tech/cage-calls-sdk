@@ -130,3 +130,15 @@ export const toriiToken = (tokenId: bigint, contractAddress: Address, complete =
   }) : null,
   metadataAttributes: complete ? JSON.stringify([{ trait_type: "Power", value: 8 }]) : null,
 });
+
+/** A RelicNFT row of Torii's SQL "tokens" table; the collection's own row has no token id. */
+export const toriiTokenRow = (tokenId: bigint | undefined, contractAddress: Address, complete = true) => ({
+  id: tokenId === undefined ? contractAddress : `${contractAddress}:${tokenId}`,
+  contract_address: contractAddress,
+  token_id: tokenId ?? null,
+  metadata: tokenId !== undefined && complete ? JSON.stringify({
+    name: `Relic #${tokenId}`,
+    image: `ipfs://image-${tokenId}`,
+    attributes: [{ trait_type: "Power", value: 8 }],
+  }) : "",
+});

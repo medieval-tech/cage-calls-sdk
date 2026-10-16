@@ -15,6 +15,7 @@ import type {
   ToriiTokenNode,
 } from "../transports/index.js";
 import { transportAttemptsFromError } from "../transports/index.js";
+import { parseTrimmedHex, sqlFelt, sqlTrimmedHex } from "../transports/torii-sql.js";
 import type {
   Address,
   DataResult,
@@ -179,6 +180,39 @@ function mapToriiRelic(token: ToriiTokenNode, relicAddress: Address): Relic | un
   const description = stringValue(token.metadataDescription) ?? stringValue(metadata?.description);
   const image = stringValue(metadata?.image) ?? stringValue(token.imagePath);
   const animationUrl = stringValue(metadata?.animation_url);
+  if (name) relic.name = name;
+  if (description) relic.description = description;
+  if (image) relic.image = image;
+  if (animationUrl) relic.animationUrl = animationUrl;
+  return relic;
+}
+
+const RELIC_METADATA = "CASE WHEN json_valid(metadata) THEN metadata END";
+
+/**
+ * Every relic in one read: display fields and [trait, value] pairs pulled out of the stored
+ * metadata JSON, about a third of the bytes of the full JSON. Torii renders SQL NULL as 0.
+ */
+function relicInventorySql(relicAddress: Address): string {
+  const field = (path: string) => `json_extract(${RELIC_METADATA}, '$.${path}')`;
+  return `SELECT ${sqlTrimmedHex("token_id")} AS id, ${field("name")} AS n, ${field("description")} AS d, ${field("image")} AS i, ${field("animation_url")} AS v, `
+    + `(SELECT json_group_array(json_array(json_extract(e.value, '$.trait_type'), json_extract(e.value, '$.value'))) FROM json_each(${field("attributes")}) e) AS a `
+    + `FROM tokens WHERE contract_address = ${sqlFelt(relicAddress)}`;
+}
+
+function relicFromSqlRow(row: Record<string, unknown>): Relic | undefined {
+  // The collection's own row has no token id.
+  if (typeof row.id !== "string" || !row.id) return undefined;
+  const pairs = typeof row.a === "string" ? JSON.parse(row.a) as unknown[] : [];
+  const relic: Relic = {
+    tokenId: parseTrimmedHex(row.id),
+    attributes: parseAttributes(pairs.flatMap((pair) => Array.isArray(pair) ? [{ trait_type: pair[0], value: pair[1] }] : [])),
+    metadataSources: ["torii"],
+  };
+  const name = stringValue(row.n);
+  const description = stringValue(row.d);
+  const image = stringValue(row.i);
+  const animationUrl = stringValue(row.v);
   if (name) relic.name = name;
   if (description) relic.description = description;
   if (image) relic.image = image;
@@ -730,42 +764,18 @@ export function createRelicsRepository(context: RelicContext): RelicsRepository 
     let source: DataSource = context.torii ? "torii" : "starknet-rpc";
 
     if (context.torii) {
-      let offset = 0;
       try {
-        for (let page = 0; page < budget.maxToriiPages && relics.size < budget.maxToriiItems; page += 1) {
-          pageCount += 1;
-          const response = await context.torii.tokens(
-            context.network.contracts.RelicNFT,
-            { offset, limit: pageSize },
-            options,
-          );
-          attempts.push(...response.attempts);
-          for (const edge of response.data.edges) {
-            const mapped = edge.node.tokenMetadata
-              ? mapToriiRelic(edge.node.tokenMetadata, context.network.contracts.RelicNFT)
-              : undefined;
-            if (mapped && relics.size < budget.maxToriiItems) relics.set(mapped.tokenId.toString(), mapped);
-          }
-          offset += response.data.edges.length;
-          const tokenRows = Math.max(0, response.data.totalCount - 1);
-          if (offset >= tokenRows || response.data.edges.length === 0) {
-            toriiComplete = offset >= tokenRows;
-            break;
-          }
+        const response = await context.torii.sql(relicInventorySql(context.network.contracts.RelicNFT), options);
+        attempts.push(...response.attempts);
+        pageCount += 1;
+        for (const row of response.data) {
+          const relic = relicFromSqlRow(row);
+          if (relic) relics.set(relic.tokenId.toString(), relic);
         }
-        if (!toriiComplete) {
-          warnings.push({
-            code: relics.size >= budget.maxToriiItems ? "TORII_ITEM_LIMIT" : "TORII_PAGE_LIMIT",
-            message: relics.size >= budget.maxToriiItems
-              ? `Relic inventory reached the ${budget.maxToriiItems} Torii item budget.`
-              : `Relic inventory reached the ${budget.maxToriiPages} Torii page budget.`,
-            source: "torii",
-          });
-        }
+        toriiComplete = true;
       } catch (error) {
         attempts.push(...transportAttemptsFromError(error));
         warnings.push({ code: "TORII_UNAVAILABLE", message: "Torii relic inventory lookup failed.", source: "torii" });
-        toriiComplete = false;
       }
     }
 

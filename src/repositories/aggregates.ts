@@ -1,7 +1,6 @@
 import { createDataResult, mapConcurrent } from "../core/request.js";
 import { normalizeAddress } from "../core/codecs.js";
-import type { FightsRepository, GachaRepository, RepositoryContext, TokensRepository } from "./index.js";
-import { readToriiFightSnapshots } from "./torii-fights.js";
+import type { FightEventsRepository, FightsRepository, GachaRepository, RepositoryContext, TokensRepository } from "./index.js";
 import type { RelicsRepository } from "./relics.js";
 import { transportAttemptsFromError } from "../transports/index.js";
 import type {
@@ -76,10 +75,6 @@ export interface AccountsRepository {
   event(ref: EventRef, account: Address, options?: RequestOptions): Promise<DataResult<AccountEventState>>;
   fightStates(account: Address, input?: { limit?: number; cursor?: bigint }, options?: RequestOptions): Promise<DataResult<AccountFightStatePage>>;
   portfolio(account: Address, options?: RequestOptions): Promise<DataResult<AccountPortfolio>>;
-}
-
-function matchesEvent(fight: FightFeedItem, ref: EventRef): boolean {
-  return fight.seasonId === ref.seasonId && fight.eventName === ref.eventName;
 }
 
 function lifecycle(fights: readonly FightFeedItem[], now: bigint): PublicEventSnapshot["lifecycle"] {
@@ -214,6 +209,7 @@ export function createAggregateRepositories(
   context: RepositoryContext,
   dependencies: {
     fights: FightsRepository;
+    fightEvents: FightEventsRepository;
     gacha: GachaRepository;
     relics: RelicsRepository;
     tokens: TokensRepository;
@@ -223,16 +219,16 @@ export function createAggregateRepositories(
     const startedAt = context.now();
     const attempts: SourceAttempt[] = [];
     const warnings: DataWarning[] = [];
-    const feed = await dependencies.fights.feedAll({}, options);
-    attempts.push(...feed.meta.attempts);
-    warnings.push(...feed.meta.warnings);
-    const fights = feed.data.filter((fight) => matchesEvent(fight, ref));
+    const event = await dependencies.fightEvents.get(ref.eventName, { seasonId: ref.seasonId }, options);
+    attempts.push(...event.meta.attempts);
+    warnings.push(...event.meta.warnings);
+    const fights = event.data?.fights ?? [];
     const enriched = await enrichPools(context, dependencies.gacha, fights, attempts, warnings, options);
     return aggregateResult(context, startedAt, {
       ref,
       lifecycle: lifecycle(fights, BigInt(Math.floor(context.now() / 1_000))),
       fights: enriched.fights,
-    }, attempts, warnings, feed.meta.complete && enriched.complete);
+    }, attempts, warnings, event.meta.complete && enriched.complete);
   };
 
   const eventForAccount = async (ref: EventRef, accountInput: Address, options: RequestOptions = {}): Promise<DataResult<AccountEventState>> => {
@@ -240,17 +236,17 @@ export function createAggregateRepositories(
     const startedAt = context.now();
     const attempts: SourceAttempt[] = [];
     const warnings: DataWarning[] = [];
-    const [feedResult, relicResult] = await Promise.allSettled([
-      dependencies.fights.feedAll({ viewer: account }, options),
+    const [eventResult, relicResult] = await Promise.allSettled([
+      dependencies.fightEvents.get(ref.eventName, { seasonId: ref.seasonId, viewer: account }, options),
       dependencies.relics.owned(account, options),
     ]);
-    if (feedResult.status === "rejected") throw feedResult.reason;
-    const feed = feedResult.value;
-    attempts.push(...feed.meta.attempts);
-    warnings.push(...feed.meta.warnings);
-    const fights = feed.data.filter((fight) => matchesEvent(fight, ref));
+    if (eventResult.status === "rejected") throw eventResult.reason;
+    const event = eventResult.value;
+    attempts.push(...event.meta.attempts);
+    warnings.push(...event.meta.warnings);
+    const fights = event.data?.fights ?? [];
     const accountState = await enrichAccountFights(context, dependencies.gacha, fights, account, attempts, warnings, options);
-    let accountComplete = feed.meta.complete && accountState.complete;
+    let accountComplete = event.meta.complete && accountState.complete;
     const accountFights = accountState.fights;
     let relics: Relic[] = [];
     let relicsComplete = false;
@@ -330,22 +326,28 @@ export function createAggregateRepositories(
         const startedAt = context.now();
         const attempts: SourceAttempt[] = [];
         const warnings: DataWarning[] = [];
-        const reads = await Promise.allSettled([
-          dependencies.fights.portfolioAll(account, options),
+        // Fight snapshots need only the account's buys, so they start as soon as those arrive
+        // instead of waiting on owned relics (which can hydrate media through IPFS).
+        const sideReads = Promise.allSettled([
           dependencies.relics.owned(account, options),
           dependencies.tokens.callsBalance(account, options),
         ]);
-        const [buysRead, relicsRead, balanceRead] = reads;
-        let buys: FightBuy[];
-        let prefetchedFights: FightFeedItem[] | undefined;
-        let complete: boolean;
-        if (buysRead.status === "fulfilled") {
-          attempts.push(...buysRead.value.meta.attempts);
-          warnings.push(...buysRead.value.meta.warnings);
-          buys = buysRead.value.data;
-          complete = buysRead.value.meta.complete;
-        } else {
-          attempts.push(...transportAttemptsFromError(buysRead.reason));
+        const fightReads = (async () => {
+          let buysRead: DataResult<FightBuy[]>;
+          try {
+            buysRead = await dependencies.fights.portfolioAll(account, options);
+          } catch (error) {
+            attempts.push(...transportAttemptsFromError(error));
+            return accountFeedFallback();
+          }
+          attempts.push(...buysRead.meta.attempts);
+          warnings.push(...buysRead.meta.warnings);
+          const snapshots = await dependencies.fights.feedMany(buysRead.data.map((buy) => buy.fightId), { viewer: account }, options);
+          attempts.push(...snapshots.meta.attempts);
+          warnings.push(...snapshots.meta.warnings);
+          return { buys: buysRead.data, fights: snapshots.data, complete: buysRead.meta.complete && snapshots.meta.complete };
+        })();
+        async function accountFeedFallback() {
           const fallback = await dependencies.fights.accountFeedAll(account, options);
           attempts.push(...fallback.meta.attempts);
           warnings.push(...fallback.meta.warnings, {
@@ -353,8 +355,7 @@ export function createAggregateRepositories(
             message: "Account portfolio used the bounded aggregate contract view because Torii was unavailable.",
             source: "starknet-rpc",
           });
-          prefetchedFights = fallback.data;
-          buys = fallback.data.flatMap((fight): FightBuy[] => fight.viewer.hasBought && fight.viewer.choiceIndex !== undefined ? [{
+          const buys = fallback.data.flatMap((fight): FightBuy[] => fight.viewer.hasBought && fight.viewer.choiceIndex !== undefined ? [{
             fightId: fight.fightId,
             buyer: account,
             marketId: fight.marketId,
@@ -362,8 +363,11 @@ export function createAggregateRepositories(
             amount: fight.viewer.shares,
             boughtAt: fight.viewer.boughtAt,
           }] : []);
-          complete = fallback.meta.complete;
+          return { buys, fights: fallback.data, complete: fallback.meta.complete };
         }
+        const [[relicsRead, balanceRead], fightState] = await Promise.all([sideReads, fightReads]);
+        const { buys } = fightState;
+        let complete = fightState.complete;
         const absorb = <T>(read: PromiseSettledResult<DataResult<T>>, label: string, fallback: T): T => {
           if (read.status === "fulfilled") {
             attempts.push(...read.value.meta.attempts);
@@ -378,30 +382,7 @@ export function createAggregateRepositories(
         };
         const relicPage = absorb(relicsRead, "Owned relics", undefined);
         const callsBalance = absorb(balanceRead, "CALLS balance", 0n);
-        const snapshots = prefetchedFights === undefined
-          ? await (async () => {
-              // Viewer-scoped hydration: a portfolio spans the account's whole
-              // betting history, and full market snapshots for it grow with
-              // GLOBAL buy volume (measured: 25 MiB for a 58-buy account).
-              // Locked-odds claim previews stay exact in this scope (they only
-              // need the viewer's own shares); legacy-fight previews are zeroed
-              // here — see readToriiFightSnapshots.
-              if (context.torii) {
-                try {
-                  return await readToriiFightSnapshots(context, buys.map((buy) => buy.fightId), account, options, "viewer");
-                } catch (error) {
-                  warnings.push(warning("Viewer-scoped fight snapshots", error));
-                }
-              }
-              return dependencies.fights.feedMany(buys.map((buy) => buy.fightId), { viewer: account }, options);
-            })()
-          : undefined;
-        if (snapshots) {
-          attempts.push(...snapshots.meta.attempts);
-          warnings.push(...snapshots.meta.warnings);
-          complete &&= snapshots.meta.complete;
-        }
-        const fights = (snapshots?.data ?? prefetchedFights ?? []).map((fight) => ({ fight }));
+        const fights = fightState.fights.map((fight) => ({ fight }));
         const relics = relicPage?.items ?? [];
         return aggregateResult(context, startedAt, {
           account,
