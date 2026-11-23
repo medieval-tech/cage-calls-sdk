@@ -47,6 +47,8 @@ export interface AnalyticsEventSummary {
   predictions: number;
   uniqueWallets: number;
   returningWallets: number;
+  /** Wallets that also participated in the immediately preceding event (subset of returningWallets). */
+  returningFromPreviousWallets: number;
   newWallets: number;
   allFightsWallets: number;
   someFightsWallets: number;
@@ -191,6 +193,7 @@ export function summarizeAnalyticsSnapshot(
     eventFightCounts.set(eventName, (eventFightCounts.get(eventName) ?? 0) + 1);
   }
   const cumulativeEventWallets = new Set<string>();
+  let previousEventWallets = new Set<string>();
   const events = Array.from(eventWallets.entries())
     .sort(([left], [right]) => {
       const a = eventOrder.get(left) ?? 0n;
@@ -199,6 +202,8 @@ export function summarizeAnalyticsSnapshot(
     })
     .map(([eventName, wallets]): AnalyticsEventSummary => {
       const returningWallets = Array.from(wallets).filter((wallet) => cumulativeEventWallets.has(wallet)).length;
+      const returningFromPreviousWallets = Array.from(wallets).filter((wallet) => previousEventWallets.has(wallet)).length;
+      previousEventWallets = wallets;
       for (const wallet of wallets) cumulativeEventWallets.add(wallet);
       const eventFights = fights.filter((fight) => fight.eventName === eventName);
       const userFights = eventUserFights.get(eventName) ?? new Map<string, Set<string>>();
@@ -215,6 +220,7 @@ export function summarizeAnalyticsSnapshot(
         predictions,
         uniqueWallets: wallets.size,
         returningWallets,
+        returningFromPreviousWallets,
         newWallets: wallets.size - returningWallets,
         allFightsWallets,
         someFightsWallets,

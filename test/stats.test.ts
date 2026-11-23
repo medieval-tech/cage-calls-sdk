@@ -174,6 +174,33 @@ describe("Cage Calls market summaries", () => {
     expect(summary.events.map((event) => event.eventName)).toEqual(["Event A", "Event B"]);
   });
 
+  it("splits returning wallets into any-earlier-event and immediately-previous-event", () => {
+    const snapshot: AnalyticsSnapshot = {
+      fights: [
+        fight(),
+        fight({ fightId: 2n, marketId: 20n, eventName: "Event B", createdAt: 200n }),
+        fight({ fightId: 3n, marketId: 30n, eventName: "Event C", createdAt: 300n }),
+      ],
+      buys: [
+        { fightId: 1n, buyer: "0xa", choiceIndex: 0, boughtAt: 100n },
+        { fightId: 1n, buyer: "0xb", choiceIndex: 0, boughtAt: 101n },
+        { fightId: 2n, buyer: "0xb", choiceIndex: 0, boughtAt: 200n },
+        { fightId: 2n, buyer: "0xc", choiceIndex: 0, boughtAt: 201n },
+        { fightId: 3n, buyer: "0xa", choiceIndex: 0, boughtAt: 300n },
+        { fightId: 3n, buyer: "0xb", choiceIndex: 0, boughtAt: 301n },
+        { fightId: 3n, buyer: "0xd", choiceIndex: 0, boughtAt: 302n },
+      ],
+      winnerChoiceByFight: {},
+    };
+
+    const [a, b, c] = summarizeAnalyticsSnapshot(snapshot, { productionOnly: true }).events;
+
+    expect(a).toMatchObject({ uniqueWallets: 2, returningWallets: 0, returningFromPreviousWallets: 0, newWallets: 2 });
+    expect(b).toMatchObject({ uniqueWallets: 2, returningWallets: 1, returningFromPreviousWallets: 1, newWallets: 1 });
+    // 0xa skipped Event B: returning from any earlier event, not from the previous one.
+    expect(c).toMatchObject({ uniqueWallets: 3, returningWallets: 2, returningFromPreviousWallets: 1, newWallets: 1 });
+  });
+
   it("applies time and domain filters before calculating summaries", () => {
     const snapshot: AnalyticsSnapshot = {
       fights: [fight(), fight({ fightId: 2n, marketId: 20n, eventName: "Event B" })],

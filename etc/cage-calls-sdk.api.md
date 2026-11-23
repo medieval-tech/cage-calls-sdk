@@ -213,6 +213,7 @@ export interface AnalyticsEventSummary {
     newWallets: number;
     // (undocumented)
     predictions: number;
+    returningFromPreviousWallets: number;
     // (undocumented)
     returningWallets: number;
     // (undocumented)
