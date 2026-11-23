@@ -197,8 +197,55 @@ describe("Cage Calls market summaries", () => {
 
     expect(a).toMatchObject({ uniqueWallets: 2, returningWallets: 0, returningFromPreviousWallets: 0, newWallets: 2 });
     expect(b).toMatchObject({ uniqueWallets: 2, returningWallets: 1, returningFromPreviousWallets: 1, newWallets: 1 });
-    // 0xa skipped Event B: returning from any earlier event, not from the previous one.
     expect(c).toMatchObject({ uniqueWallets: 3, returningWallets: 2, returningFromPreviousWallets: 1, newWallets: 1 });
+  });
+
+  it("compares with the event right before, even when it has no predictions in range", () => {
+    const snapshot: AnalyticsSnapshot = {
+      fights: [
+        fight(),
+        fight({ fightId: 2n, marketId: 20n, eventName: "Event B", createdAt: 200n }),
+        fight({ fightId: 3n, marketId: 30n, eventName: "Event C", createdAt: 300n }),
+      ],
+      buys: [
+        { fightId: 1n, buyer: "0xa", choiceIndex: 0, boughtAt: 100n },
+        { fightId: 2n, buyer: "0xa", choiceIndex: 0, boughtAt: 50n },
+        { fightId: 3n, buyer: "0xa", choiceIndex: 0, boughtAt: 300n },
+      ],
+      winnerChoiceByFight: {},
+    };
+
+    const unfiltered = summarizeAnalyticsSnapshot(snapshot).events;
+    expect(unfiltered.map((event) => [event.eventName, event.returningFromPreviousWallets])).toEqual([
+      ["Event A", 0],
+      ["Event B", 1],
+      ["Event C", 1],
+    ]);
+
+    const windowed = summarizeAnalyticsSnapshot(snapshot, { from: 100n }).events;
+    expect(windowed.map((event) => [event.eventName, event.returningWallets, event.returningFromPreviousWallets])).toEqual([
+      ["Event A", 0, 0],
+      ["Event C", 1, 0],
+    ]);
+  });
+
+  it("orders events created at the same time by their first fight", () => {
+    const snapshot: AnalyticsSnapshot = {
+      fights: [
+        fight({ fightId: 1n, eventName: "Zeta", createdAt: 100n }),
+        fight({ fightId: 2n, marketId: 20n, eventName: "Alpha", createdAt: 100n }),
+      ],
+      buys: [
+        { fightId: 1n, buyer: "0xa", choiceIndex: 0, boughtAt: 100n },
+        { fightId: 2n, buyer: "0xa", choiceIndex: 0, boughtAt: 101n },
+      ],
+      winnerChoiceByFight: {},
+    };
+
+    expect(summarizeAnalyticsSnapshot(snapshot).events.map((event) => [event.eventName, event.returningFromPreviousWallets])).toEqual([
+      ["Zeta", 0],
+      ["Alpha", 1],
+    ]);
   });
 
   it("applies time and domain filters before calculating summaries", () => {
