@@ -214,6 +214,8 @@ export interface AnalyticsEventSummary {
     // (undocumented)
     predictions: number;
     // (undocumented)
+    returningFromPreviousWallets: number;
+    // (undocumented)
     returningWallets: number;
     // (undocumented)
     someFightsPercentage: number;

@@ -47,6 +47,7 @@ export interface AnalyticsEventSummary {
   predictions: number;
   uniqueWallets: number;
   returningWallets: number;
+  returningFromPreviousWallets: number;
   newWallets: number;
   allFightsWallets: number;
   someFightsWallets: number;
@@ -182,47 +183,51 @@ export function summarizeAnalyticsSnapshot(
     return { day, predictions: entry.predictions, uniqueWallets: entry.wallets.size, cumulativeWallets: seenWallets.size, volume: entry.volume };
   });
 
-  const eventOrder = new Map<string, bigint>();
+  const eventFirstFight = new Map<string, Fight>();
   const eventFightCounts = new Map<string, number>();
   for (const fight of includedFights) {
     const eventName = fight.eventName.trim() || "Untitled event";
-    const existing = eventOrder.get(eventName);
-    if (existing === undefined || fight.createdAt < existing) eventOrder.set(eventName, fight.createdAt);
+    const first = eventFirstFight.get(eventName);
+    if (!first || fight.createdAt < first.createdAt || (fight.createdAt === first.createdAt && fight.fightId < first.fightId)) {
+      eventFirstFight.set(eventName, fight);
+    }
     eventFightCounts.set(eventName, (eventFightCounts.get(eventName) ?? 0) + 1);
   }
+  const eventOrder = Array.from(eventFirstFight.entries())
+    .sort(([, a], [, b]) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.fightId < b.fightId ? -1 : a.fightId > b.fightId ? 1 : 0)
+    .map(([eventName]) => eventName);
   const cumulativeEventWallets = new Set<string>();
-  const events = Array.from(eventWallets.entries())
-    .sort(([left], [right]) => {
-      const a = eventOrder.get(left) ?? 0n;
-      const b = eventOrder.get(right) ?? 0n;
-      return a < b ? -1 : a > b ? 1 : left.localeCompare(right);
-    })
-    .map(([eventName, wallets]): AnalyticsEventSummary => {
-      const returningWallets = Array.from(wallets).filter((wallet) => cumulativeEventWallets.has(wallet)).length;
-      for (const wallet of wallets) cumulativeEventWallets.add(wallet);
-      const eventFights = fights.filter((fight) => fight.eventName === eventName);
-      const userFights = eventUserFights.get(eventName) ?? new Map<string, Set<string>>();
-      const totalFights = eventFightCounts.get(eventName) ?? eventFights.length;
-      let allFightsWallets = 0;
-      let someFightsWallets = 0;
-      for (const values of userFights.values()) {
-        if (totalFights > 0 && values.size >= totalFights) allFightsWallets += 1;
-        else someFightsWallets += 1;
-      }
-      const predictions = eventFights.reduce((total, fight) => total + fight.predictions, 0);
-      return {
-        eventName,
-        predictions,
-        uniqueWallets: wallets.size,
-        returningWallets,
-        newWallets: wallets.size - returningWallets,
-        allFightsWallets,
-        someFightsWallets,
-        allFightsPercentage: wallets.size ? (allFightsWallets / wallets.size) * 100 : 0,
-        someFightsPercentage: wallets.size ? (someFightsWallets / wallets.size) * 100 : 0,
-        fights: eventFights,
-      };
-    });
+  const events = eventOrder.flatMap((eventName, index): AnalyticsEventSummary[] => {
+    const wallets = eventWallets.get(eventName);
+    if (!wallets) return [];
+    const previousEventWallets = eventWallets.get(eventOrder[index - 1] ?? "") ?? new Set<string>();
+    const returningWallets = Array.from(wallets).filter((wallet) => cumulativeEventWallets.has(wallet)).length;
+    const returningFromPreviousWallets = Array.from(wallets).filter((wallet) => previousEventWallets.has(wallet)).length;
+    for (const wallet of wallets) cumulativeEventWallets.add(wallet);
+    const eventFights = fights.filter((fight) => fight.eventName === eventName);
+    const userFights = eventUserFights.get(eventName) ?? new Map<string, Set<string>>();
+    const totalFights = eventFightCounts.get(eventName) ?? eventFights.length;
+    let allFightsWallets = 0;
+    let someFightsWallets = 0;
+    for (const values of userFights.values()) {
+      if (totalFights > 0 && values.size >= totalFights) allFightsWallets += 1;
+      else someFightsWallets += 1;
+    }
+    const predictions = eventFights.reduce((total, fight) => total + fight.predictions, 0);
+    return [{
+      eventName,
+      predictions,
+      uniqueWallets: wallets.size,
+      returningWallets,
+      returningFromPreviousWallets,
+      newWallets: wallets.size - returningWallets,
+      allFightsWallets,
+      someFightsWallets,
+      allFightsPercentage: wallets.size ? (allFightsWallets / wallets.size) * 100 : 0,
+      someFightsPercentage: wallets.size ? (someFightsWallets / wallets.size) * 100 : 0,
+      fights: eventFights,
+    }];
+  });
 
   const repeatWallets = Array.from(allWallets).filter((wallet) => {
     let appearances = 0;

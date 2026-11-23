@@ -1,6 +1,6 @@
 {
   "name": "@medievaltech/cage-calls-sdk",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Framework-neutral TypeScript SDK for Cage Calls",
   "license": "MIT",
   "type": "module",
